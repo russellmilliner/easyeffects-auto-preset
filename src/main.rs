@@ -848,6 +848,64 @@ pub fn pause_active_media_players() -> Vec<String> {
     paused
 }
 
+pub fn is_our_app_cmdline(args: &[String]) -> bool {
+    if args.is_empty() {
+        return false;
+    }
+    let exe_base = std::path::Path::new(&args[0])
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let target_basenames = [
+        "easyeffects-auto-preset",
+        "easyeffects_auto_preset.py",
+        "easyeffects-auto-preset-gui",
+    ];
+
+    let is_target = if target_basenames.contains(&exe_base) {
+        true
+    } else if exe_base.starts_with("python") {
+        let script_arg = args
+            .iter()
+            .skip(1)
+            .find(|a| !a.starts_with('-'))
+            .map(|s| s.as_str())
+            .unwrap_or("");
+        let script_base = std::path::Path::new(script_arg)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        target_basenames.contains(&script_base)
+    } else {
+        false
+    };
+
+    if !is_target {
+        return false;
+    }
+
+    let is_one_shot = args.iter().skip(1).any(|a| {
+        matches!(
+            a.as_str(),
+            "--status"
+                | "-s"
+                | "--cli-status"
+                | "--switch"
+                | "--list-presets"
+                | "-l"
+                | "--install-presets"
+                | "--check-deps"
+                | "--check-update"
+                | "-u"
+                | "--version"
+                | "-V"
+                | "--help"
+                | "-h"
+        )
+    });
+    !is_one_shot
+}
+
 pub fn enforce_single_instance_rust() {
     let my_pid = std::process::id();
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
@@ -859,7 +917,17 @@ pub fn enforce_single_instance_rust() {
     if let Ok(content) = fs::read_to_string(&pid_file) {
         if let Ok(old_pid) = content.trim().parse::<u32>() {
             if old_pid > 1 && old_pid != my_pid {
-                candidate_pids.push(old_pid);
+                let cmdline_path = PathBuf::from(format!("/proc/{}/cmdline", old_pid));
+                if let Ok(raw) = fs::read(&cmdline_path) {
+                    let args: Vec<String> = raw
+                        .split(|&b| b == 0)
+                        .filter(|s| !s.is_empty())
+                        .map(|s| String::from_utf8_lossy(s).to_string())
+                        .collect();
+                    if is_our_app_cmdline(&args) {
+                        candidate_pids.push(old_pid);
+                    }
+                }
             }
         }
     }
@@ -877,32 +945,7 @@ pub fn enforce_single_instance_rust() {
                         .filter(|s| !s.is_empty())
                         .map(|s| String::from_utf8_lossy(s).to_string())
                         .collect();
-                    if args.is_empty() {
-                        continue;
-                    }
-                    let joined = args.join(" ");
-                    let is_target = joined.contains("easyeffects-auto-preset")
-                        || joined.contains("easyeffects_auto_preset.py");
-                    let is_one_shot = args.iter().skip(1).any(|a| {
-                        matches!(
-                            a.as_str(),
-                            "--status"
-                                | "-s"
-                                | "--cli-status"
-                                | "--switch"
-                                | "--list-presets"
-                                | "-l"
-                                | "--install-presets"
-                                | "--check-deps"
-                                | "--check-update"
-                                | "-u"
-                                | "--version"
-                                | "-V"
-                                | "--help"
-                                | "-h"
-                        )
-                    });
-                    if is_target && !is_one_shot && !candidate_pids.contains(&pid) {
+                    if is_our_app_cmdline(&args) && !candidate_pids.contains(&pid) {
                         candidate_pids.push(pid);
                     }
                 }

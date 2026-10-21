@@ -3015,18 +3015,21 @@ def _is_our_app_process(pid: int) -> bool:
             return False
 
         exe_base = os.path.basename(args[0])
-        if exe_base in ("bash", "sh", "zsh", "grep", "rg", "cargo", "rustc", "flatpak-builder", "systemctl"):
-            return False
+        target_basenames = {
+            "easyeffects-auto-preset",
+            "easyeffects_auto_preset.py",
+            "easyeffects-auto-preset-gui",
+        }
 
-        joined = " ".join(args)
-        is_target = any(
-            token in joined
-            for token in (
-                "easyeffects-auto-preset",
-                "easyeffects_auto_preset.py",
-                "easyeffects-auto-preset-gui",
-            )
-        )
+        if exe_base in target_basenames:
+            is_target = True
+        elif exe_base.startswith("python"):
+            # Only match when Python is directly executing one of our app scripts (not -c, -m, or -)
+            script_arg = next((a for a in args[1:] if not a.startswith("-")), "")
+            is_target = os.path.basename(script_arg) in target_basenames
+        else:
+            is_target = False
+
         if not is_target:
             return False
 
