@@ -26,8 +26,21 @@ import time
 import urllib.error
 import urllib.request
 
-from PyQt6.QtCore import QObject, QRectF, Qt, QThread, QTimer, QUrl, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QAction, QBrush, QColor, QDesktopServices, QFont, QIcon, QImage, QPainter, QPen, QPixmap
+from PyQt6.QtCore import QObject, QPointF, QRectF, Qt, QThread, QTimer, QUrl, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import (
+    QAction,
+    QBrush,
+    QColor,
+    QDesktopServices,
+    QFont,
+    QIcon,
+    QImage,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -62,7 +75,7 @@ AUTOSTART_FILE = Path.home() / ".config" / "autostart" / "easyeffects-auto-prese
 APP_DESKTOP_FILE = Path.home() / ".local" / "share" / "applications" / "easyeffects-auto-preset.desktop"
 USER_SHARED_PRESETS_DIR = Path.home() / ".local" / "share" / "easyeffects-auto-preset" / "presets"
 
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.5.0"
 GITHUB_RELEASES_API_URL = "https://api.github.com/repos/russellmilliner/easyeffects-auto-preset/releases/latest"
 GITHUB_RELEASES_PAGE_URL = "https://github.com/russellmilliner/easyeffects-auto-preset/releases"
 
@@ -999,50 +1012,147 @@ def generate_app_icon(path: Path, size: int = 128) -> None:
     img.save(str(path))
 
 
-def build_tray_icon(mode: str = "default", enabled: bool = True, size: int = 64) -> QIcon:
+def _render_tray_pixmap(mode: str = "default", enabled: bool = True, size: int = 64) -> QPixmap:
+    """Render a single resolution pixmap showing both a mode icon glyph and a bold mode text badge."""
     img = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
     img.fill(Qt.GlobalColor.transparent)
     painter = QPainter(img)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
 
     scale = size / 64.0
-    bar_color = QColor(220, 225, 235, 230) if enabled else QColor(130, 135, 145, 150)
-    knob_color = QColor(255, 255, 255) if enabled else QColor(160, 160, 160)
-
-    pen = QPen(bar_color, 4.0 * scale, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
-    painter.setPen(pen)
-
-    xs = [16 * scale, 32 * scale, 48 * scale]
-    if mode == "youtube":
-        knob_ys = [18 * scale, 36 * scale, 22 * scale]
-        badge_color = QColor(0, 168, 255)   # Cyan / Blue for YouTube
-    elif mode == "meeting":
-        knob_ys = [44 * scale, 18 * scale, 28 * scale]
-        badge_color = QColor(46, 204, 113)  # Vibrant Green for Meetings
-    else:
-        knob_ys = [24 * scale, 32 * scale, 20 * scale]
-        badge_color = QColor(185, 195, 210) # Clean Slate for Default
 
     if not enabled:
-        badge_color = QColor(231, 76, 60)   # Red / Paused
+        bg_color = QColor(45, 16, 20, 248)
+        border_color = QColor(248, 113, 113)
+        badge_color = QColor(220, 38, 38)
+        badge_text = "OFF"
+    elif mode == "meeting":
+        bg_color = QColor(10, 44, 32, 248)
+        border_color = QColor(52, 211, 153)
+        badge_color = QColor(5, 150, 105)
+        badge_text = "MTG"
+    elif mode == "youtube":
+        bg_color = QColor(12, 34, 58, 248)
+        border_color = QColor(56, 189, 248)
+        badge_color = QColor(2, 132, 199)
+        badge_text = "MED"
+    else:
+        bg_color = QColor(24, 28, 38, 248)
+        border_color = QColor(148, 163, 184)
+        badge_color = QColor(71, 85, 105)
+        badge_text = "DEF"
 
-    for i, x in enumerate(xs):
-        painter.drawLine(int(x), int(12 * scale), int(x), int(52 * scale))
-        painter.setBrush(QBrush(knob_color))
-        painter.setPen(QPen(QColor(25, 28, 35, 190), 1.5 * scale))
+    # 1. Outer rounded squircle container
+    outer_rect = QRectF(2.0 * scale, 2.0 * scale, 60.0 * scale, 60.0 * scale)
+    painter.setBrush(QBrush(bg_color))
+    painter.setPen(QPen(border_color, max(1.5, 2.4 * scale)))
+    painter.drawRoundedRect(outer_rect, 13.0 * scale, 13.0 * scale)
+
+    # 2. Upper Mode Symbol / Glyph (y = 6..36)
+    if not enabled:
+        # Pause bars (⏸)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(254, 202, 202)))
         painter.drawRoundedRect(
-            QRectF(x - 5.5 * scale, knob_ys[i] - 3.5 * scale, 11 * scale, 7 * scale),
-            2 * scale,
-            2 * scale,
+            QRectF(21.0 * scale, 9.5 * scale, 7.5 * scale, 22.0 * scale),
+            2.5 * scale,
+            2.5 * scale,
+        )
+        painter.drawRoundedRect(
+            QRectF(35.5 * scale, 9.5 * scale, 7.5 * scale, 22.0 * scale),
+            2.5 * scale,
+            2.5 * scale,
+        )
+    elif mode == "meeting":
+        # Microphone glyph (🎤) + sound waves
+        # Sound wave arcs on left & right
+        wave_pen = QPen(QColor(110, 231, 183), max(1.2, 2.2 * scale), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        painter.setPen(wave_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawArc(QRectF(12.0 * scale, 9.0 * scale, 10.0 * scale, 16.0 * scale), 120 * 16, 120 * 16)
+        painter.drawArc(QRectF(42.0 * scale, 9.0 * scale, 10.0 * scale, 16.0 * scale), -60 * 16, 120 * 16)
+
+        # Microphone capsule
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        painter.drawRoundedRect(
+            QRectF(26.5 * scale, 6.5 * scale, 11.0 * scale, 16.5 * scale),
+            5.5 * scale,
+            5.5 * scale,
         )
 
-    # Status pip badge at bottom-right
+        # Microphone U-cradle, stem, and base
+        mic_pen = QPen(QColor(255, 255, 255), max(1.5, 2.8 * scale), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        painter.setPen(mic_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawArc(QRectF(22.0 * scale, 10.5 * scale, 20.0 * scale, 17.5 * scale), 180 * 16, 180 * 16)
+        painter.drawLine(QPointF(32.0 * scale, 28.5 * scale), QPointF(32.0 * scale, 34.0 * scale))
+        painter.drawLine(QPointF(25.5 * scale, 34.0 * scale), QPointF(38.5 * scale, 34.0 * scale))
+    elif mode == "youtube":
+        # Play triangle glyph (▶) + sound waves
+        painter.setPen(QPen(QColor(255, 255, 255), max(1.0, 1.6 * scale), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        play_poly = QPolygonF(
+            [
+                QPointF(20.0 * scale, 8.5 * scale),
+                QPointF(20.0 * scale, 33.0 * scale),
+                QPointF(41.5 * scale, 20.75 * scale),
+            ]
+        )
+        painter.drawPolygon(play_poly)
+
+        # Subtle audio wave arc on the right
+        wave_pen = QPen(QColor(125, 211, 252), max(1.3, 2.5 * scale), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        painter.setPen(wave_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawArc(QRectF(37.0 * scale, 10.5 * scale, 12.0 * scale, 20.5 * scale), -55 * 16, 110 * 16)
+    else:
+        # Equalizer sliders glyph (3 vertical tracks + knobs)
+        xs = [18.0 * scale, 32.0 * scale, 46.0 * scale]
+        knob_ys = [15.0 * scale, 25.5 * scale, 18.0 * scale]
+        track_pen = QPen(QColor(203, 213, 225), max(1.4, 3.2 * scale), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        for i, x in enumerate(xs):
+            painter.setPen(track_pen)
+            painter.drawLine(QPointF(x, 8.5 * scale), QPointF(x, 33.0 * scale))
+            painter.setBrush(QBrush(QColor(255, 255, 255)))
+            painter.setPen(QPen(QColor(15, 23, 42, 210), max(1.0, 1.3 * scale)))
+            painter.drawRoundedRect(
+                QRectF(x - 4.8 * scale, knob_ys[i] - 3.0 * scale, 9.6 * scale, 6.0 * scale),
+                1.8 * scale,
+                1.8 * scale,
+            )
+
+    # 3. Bottom Mode Text Badge Pill (y = 37.5..60)
+    badge_rect = QRectF(3.5 * scale, 37.5 * scale, 57.0 * scale, 23.0 * scale)
     painter.setBrush(QBrush(badge_color))
-    painter.setPen(QPen(QColor(20, 22, 28, 240), 2.2 * scale))
-    painter.drawEllipse(QRectF(40 * scale, 40 * scale, 20 * scale, 20 * scale))
+    painter.setPen(QPen(border_color, max(1.0, 1.4 * scale)))
+    painter.drawRoundedRect(badge_rect, 8.5 * scale, 8.5 * scale)
+
+    font = QFont("Sans Serif")
+    font.setWeight(QFont.Weight.Black)
+    font.setPixelSize(max(8, int(round(16.0 * scale))))
+    painter.setFont(font)
+
+    # Subtle dark drop-shadow for maximum text legibility at small tray sizes
+    painter.setPen(QColor(0, 0, 0, 160))
+    painter.drawText(
+        badge_rect.translated(0, max(0.6, 0.9 * scale)),
+        Qt.AlignmentFlag.AlignCenter,
+        badge_text,
+    )
+    painter.setPen(QColor(255, 255, 255))
+    painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, badge_text)
 
     painter.end()
-    return QIcon(QPixmap.fromImage(img))
+    return QPixmap.fromImage(img)
+
+
+def build_tray_icon(mode: str = "default", enabled: bool = True, size: int = 64) -> QIcon:
+    icon = QIcon()
+    for sz in sorted({22, 24, 32, 48, 64, 128, size}):
+        icon.addPixmap(_render_tray_pixmap(mode=mode, enabled=enabled, size=sz))
+    return icon
 
 
 def parse_semver(version: str) -> tuple[int, int, int] | None:
@@ -1937,14 +2047,9 @@ class MainWindow(QMainWindow):
         banner_layout = QHBoxLayout(self.banner)
 
         self.icon_label = QLabel(self)
-        if APP_ICON_FILE.is_file():
-            self.icon_label.setPixmap(
-                QPixmap(str(APP_ICON_FILE)).scaled(
-                    48, 48, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-                )
-            )
-        else:
-            self.icon_label.setPixmap(build_tray_icon().pixmap(48, 48))
+        self.icon_label.setPixmap(
+            _render_tray_pixmap(mode="default", enabled=self.config.get("enabled", True), size=48)
+        )
         banner_layout.addWidget(self.icon_label)
 
         banner_text_layout = QVBoxLayout()
@@ -2514,6 +2619,11 @@ class MainWindow(QMainWindow):
         self.config["enabled"] = checked
         save_config(self.config)
         self.worker.update_config(self.config)
+        self.icon_label.setPixmap(
+            _render_tray_pixmap(mode=self.worker.current_mode, enabled=checked, size=48)
+        )
+        if hasattr(self, "tray_icon"):
+            self.tray_icon.setIcon(build_tray_icon(self.worker.current_mode, checked))
 
     def _update_enable_btn_text(self, checked: bool):
         if checked:
@@ -2612,10 +2722,13 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str, str, list)
     def _on_state_changed(self, mode: str, active_preset: str, streams: list):
+        self.icon_label.setPixmap(
+            _render_tray_pixmap(mode=mode, enabled=self.config.get("enabled", True), size=48)
+        )
         mode_display = {
-            "meeting": "🎤 Voice Meeting Active",
-            "youtube": "▶ YouTube / Media Playback Active",
-            "default": "🎵 Idle / Default",
+            "meeting": "🎤 Voice Meeting Active [MTG]",
+            "youtube": "▶ YouTube / Media Playback Active [MED]",
+            "default": "🎚 Idle / Default [DEF]",
         }.get(mode, mode.capitalize())
 
         status_str = f"Mode: <b>{mode_display}</b>  |  Active Preset: <b>{active_preset or 'None'}</b>"

@@ -1051,7 +1051,7 @@ fn run_daemon(config: Config) {
 #[command(
     name = "easyeffects-auto-preset",
     author = "Russell Milliner <russell.milliner@gmail.com>",
-    version = "0.4.0",
+    version = "0.5.0",
     about = "Automated EasyEffects preset switcher for Voice Meetings, YouTube, Music, Movies, and Video on Linux (PipeWire / KDE Plasma)"
 )]
 struct Args {
