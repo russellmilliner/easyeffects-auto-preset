@@ -72,6 +72,7 @@ DEFAULT_CONFIG = {
     "detect_communication_role": True,
     "detect_meeting_apps": True,
     "detect_youtube": True,
+    "detect_media_apps": True,
     "show_notifications": True,
     "minimize_on_startup": True,
     "check_updates_on_startup": True,
@@ -86,6 +87,117 @@ MEETING_KEYWORDS = [
     "meet.google.com", "google meet", "zoom meeting", "teams call",
     "slack huddle", "discord call", "webex", "gotomeeting", "chime",
 ]
+
+KNOWN_MEDIA_BINARIES = {
+    # Video & movie players / media centers
+    "vlc", "mpv", "celluloid", "totem", "haruna", "dragon", "kaffeine",
+    "smplayer", "mplayer", "parole", "clapper", "showtime", "bomi", "qmplay2",
+    "kodi", "kodi.bin", "plex", "plexmediaplayer", "plex-htpc",
+    "jellyfinmediaplayer", "jellyfin-mpv-shim", "stremio", "freetube",
+    "newpipe", "pipeline", "tubefeeder", "hypnotix", "ffplay",
+    # Music players & audio streaming apps
+    "spotify", "nuclear", "tidal-hifi", "high-tide", "qobuz", "deezer",
+    "cider", "apple-music", "youtube-music", "pear-desktop", "spotube",
+    "psst", "ncspot", "spotifyd", "elisa", "strawberry", "clementine",
+    "rhythmbox", "amberol", "lollypop", "g4music", "gapless", "audacious",
+    "deadbeef", "qmmp", "cmus", "mpd", "cantata", "amarok", "pragha",
+    "sayonara", "quodlibet", "fooyin", "tauonmb", "tauon", "feishin",
+    "supersonic", "finamp", "sonixd", "harmony", "plexamp", "radiotray-ng",
+    "shortwave", "goodvibes", "gradio",
+}
+
+KNOWN_MEDIA_APP_IDS = (
+    "org.videolan.vlc",
+    "io.mpv.mpv",
+    "io.github.celluloid_player",
+    "org.kde.haruna",
+    "org.kde.dragonplayer",
+    "org.kde.elisa",
+    "org.gnome.totem",
+    "org.gnome.showtime",
+    "com.rafostar.clapper",
+    "tv.kodi.kodi",
+    "tv.plex.",
+    "com.github.iwalton3.jellyfin-media-player",
+    "com.stremio.stremio",
+    "io.freetubeapp.freetube",
+    "com.spotify.client",
+    "org.strawberrymusicplayer.strawberry",
+    "org.clementine_player.clementine",
+    "org.gnome.rhythmbox",
+    "io.bassi.amberol",
+    "org.gnome.lollypop",
+    "com.github.neithern.g4music",
+    "org.atheme.audacious",
+    "com.plexamp.plexamp",
+    "de.haeckerfelix.shortwave",
+)
+
+MEDIA_KEYWORDS = [
+    # Video & movie streaming / players
+    "youtube", "youtu.be", "netflix", "disney+", "disneyplus", "prime video",
+    "amazon video", "hulu", "hbomax", "max.com", "peacock", "paramount+",
+    "apple tv", "crunchyroll", "twitch", "vimeo", "dailymotion", "nebula",
+    "curiositystream", "plex", "jellyfin", "emby", "kodi", "vlc", "mpv",
+    "celluloid", "haruna", "totem", "clapper", "stremio", "freetube",
+    "smplayer", "dragon player",
+    # Music streaming & desktop players
+    "spotify", "soundcloud", "tidal", "deezer", "qobuz", "bandcamp",
+    "pandora", "apple music", "amazon music", "iheart", "tunein", "mixcloud",
+    "audiomack", "pocket casts", "overcast", "elisa", "strawberry",
+    "rhythmbox", "clementine", "amberol", "lollypop", "audacious",
+    "deadbeef", "plexamp", "feishin", "supersonic",
+]
+
+MEDIA_ROLES = {"music", "video", "movie"}
+
+
+def detect_media_playback_stream(sk: dict[str, str], config: dict) -> tuple[bool, str, str]:
+    """Check if a sink-input dict represents YouTube, music, movie, or video playback.
+
+    Returns (is_media_playing, trigger_label_for_table, detailed_reason).
+    """
+    if not config.get("detect_youtube", True) and not config.get("detect_media_apps", True):
+        return False, "None", ""
+
+    app = sk.get("application.name", "")
+    binary = sk.get("application.process.binary", "").lower()
+    media = sk.get("media.name", "")
+    role = sk.get("media.role", "").lower()
+    app_id = (sk.get("pipewire.access.portal.app_id") or sk.get("application.id") or "").lower()
+
+    app_lower = app.lower()
+    media_lower = media.lower()
+
+    if (
+        "speech-dispatcher" in binary
+        or "sd_dummy" in binary
+        or "easyeffects" in binary
+        or "speech-dispatcher" in app_lower
+        or "easyeffects" in app_lower
+    ):
+        return False, "None", ""
+
+    display_label = f"{media} ({app})" if (media and app) else (app or media or binary or "Media")
+
+    # 1. Native music, movie, or video application binary / Flatpak ID / PipeWire media.role
+    if config.get("detect_media_apps", True) or config.get("detect_youtube", True):
+        if binary in KNOWN_MEDIA_BINARIES:
+            return True, f"Media App ({app or binary})", f"Media App: {display_label}"
+        if app_id and any(aid in app_id for aid in KNOWN_MEDIA_APP_IDS):
+            return True, f"Media App ({app or app_id})", f"Media App: {display_label}"
+        if role in MEDIA_ROLES:
+            return True, f"Media Role ({role.capitalize()})", f"Media ({role}): {display_label}"
+
+    # 2. YouTube, music, movie, and video streaming keywords in media.name or application.name
+    if config.get("detect_youtube", True) or config.get("detect_media_apps", True):
+        if "youtube" in media_lower or "youtube" in app_lower:
+            return True, "YouTube Playing", f"YouTube: {display_label}"
+        for kw in MEDIA_KEYWORDS:
+            if kw in media_lower or kw in app_lower:
+                return True, f"Media ({kw})", f"Media ({kw}): {display_label}"
+
+    return False, "None", ""
 
 
 def generate_app_icon(path: Path, size: int = 128) -> None:
@@ -479,9 +591,11 @@ class AudioMonitorWorker(QObject):
             media = sk.get("media.name", "")
             role = sk.get("media.role", "").lower()
 
+            if "speech-dispatcher" in binary or "sd_dummy" in binary:
+                continue
+
             item_trigger = "None"
             is_sk_meeting = False
-            is_sk_youtube = False
 
             # Check meeting conditions
             if self.config.get("detect_meeting_apps", True) and binary in KNOWN_MEETING_BINARIES:
@@ -501,13 +615,13 @@ class AudioMonitorWorker(QObject):
                 meeting_active = True
                 meeting_details = f"Meeting app: {app} ({media})"
 
-            # Check YouTube conditions (only when actively playing sound)
-            if self.config.get("detect_youtube", True) and is_playing:
-                if "youtube" in media.lower() or "youtube" in app.lower():
-                    is_sk_youtube = True
-                    item_trigger = "YouTube Playing"
+            # Check YouTube, music, movie, and video playback (only when actively playing sound)
+            if not is_sk_meeting and is_playing:
+                matched_media, trig_label, media_detail = detect_media_playback_stream(sk, self.config)
+                if matched_media:
+                    item_trigger = trig_label
                     youtube_playing = True
-                    youtube_details = f"YouTube: {media or app}"
+                    youtube_details = media_detail
 
             stream_items.append({
                 "type": "Audio Playback",
@@ -693,7 +807,7 @@ class MainWindow(QMainWindow):
         grid = QGridLayout(grp_mapping)
         grid.setSpacing(12)
 
-        grid.addWidget(QLabel("<b>YouTube Playback Preset:</b>"), 0, 0)
+        grid.addWidget(QLabel("<b>YouTube / Music / Movie / Video Preset:</b>"), 0, 0)
         self.combo_youtube = QComboBox(grp_mapping)
         grid.addWidget(self.combo_youtube, 0, 1)
 
@@ -731,7 +845,7 @@ class MainWindow(QMainWindow):
 
         self.chk_detect_mic = QCheckBox("Detect active microphone (Google Meet, Zoom, Teams, Slack, Discord)", grp_detect)
         self.chk_detect_comm = QCheckBox("Detect communication audio streams (media.role = phone/communication)", grp_detect)
-        self.chk_detect_yt = QCheckBox("Detect active YouTube playback in browser tabs and web apps", grp_detect)
+        self.chk_detect_yt = QCheckBox("Detect YouTube, music, movie & video playback (browsers, Spotify, VLC, mpv, Plex, Kodi, etc.)", grp_detect)
 
         vbox_detect.addWidget(self.chk_detect_mic)
         vbox_detect.addWidget(self.chk_detect_comm)
@@ -908,6 +1022,7 @@ class MainWindow(QMainWindow):
         self.config["detect_microphone"] = self.chk_detect_mic.isChecked()
         self.config["detect_communication_role"] = self.chk_detect_comm.isChecked()
         self.config["detect_youtube"] = self.chk_detect_yt.isChecked()
+        self.config["detect_media_apps"] = self.chk_detect_yt.isChecked()
         self.config["show_notifications"] = self.chk_notify.isChecked()
         self.config["check_updates_on_startup"] = self.chk_updates_startup.isChecked()
         self.config["debounce_seconds"] = self.spin_debounce.value()
@@ -986,7 +1101,7 @@ class MainWindow(QMainWindow):
         # Update banner
         mode_display = {
             "meeting": "🎤 Voice Meeting Active",
-            "youtube": "▶ YouTube Playback Active",
+            "youtube": "▶ YouTube / Media Playback Active",
             "default": "🎵 Idle / Default",
         }.get(mode, mode.capitalize())
 

@@ -44,7 +44,7 @@ If you find EasyEffects Auto Preset helpful for your audio workflow and meetings
 
 ## ✨ Features
 
-- 🎧 **Automatic YouTube Detection:** Switches to **`Crystal more Bass`** when YouTube or YouTube Music is actively playing audio in your browser (Zen, Firefox, Chrome, Edge) or web applications.
+- 🎧 **Automatic YouTube, Music, Movie & Video Detection:** Switches to **`Crystal more Bass`** (your configured YouTube / Media preset) whenever YouTube, music, movies, or videos are actively playing in your browser (Zen, Firefox, Chrome, Edge — YouTube, YouTube Music, Netflix, Disney+, Prime Video, Twitch, Plex, SoundCloud, etc.) or in native music, movie, and video applications (Spotify, VLC, mpv, Celluloid, Haruna, Elisa, Strawberry, Rhythmbox, Amberol, Lollypop, Audacious, Kodi, Plex, Jellyfin, Stremio, FreeTube, or any PipeWire stream with `media.role` set to `music`, `video`, or `movie`).
 - 🎤 **Voice Meeting Detection:** Switches to **`Compressed-Max`** or **`Meeting-Voice-Clear`** whenever a voice meeting is active (Google Meet, Zoom, Microsoft Teams, Slack huddle, Discord, or any microphone recording stream).
 - 🔄 **Smart Debouncing:** A configurable grace period (default: 2.0s) prevents abrupt preset flapping during audio buffering, track changes, or speaking pauses.
 - 🦀 **Dual Architecture (Rust + Python/Qt6):**
@@ -177,6 +177,7 @@ Settings are saved in `~/.config/easyeffects-auto-preset/config.json`:
   "detect_communication_role": true,
   "detect_meeting_apps": true,
   "detect_youtube": true,
+  "detect_media_apps": true,
   "show_notifications": true,
   "minimize_on_startup": true,
   "check_updates_on_startup": true

@@ -26,6 +26,7 @@ const DEFAULT_CONFIG_JSON: &str = r#"{
   "detect_communication_role": true,
   "detect_meeting_apps": true,
   "detect_youtube": true,
+  "detect_media_apps": true,
   "check_updates_on_startup": true
 }"#;
 
@@ -61,6 +62,181 @@ const MEETING_KEYWORDS: &[&str] = &[
     "chime",
 ];
 
+/// Native music, movie, and video player binaries that should switch to `youtube_preset`.
+const KNOWN_MEDIA_BINARIES: &[&str] = &[
+    // Video & movie players / media centers
+    "vlc",
+    "mpv",
+    "celluloid",
+    "totem",
+    "haruna",
+    "dragon",
+    "kaffeine",
+    "smplayer",
+    "mplayer",
+    "parole",
+    "clapper",
+    "showtime",
+    "bomi",
+    "qmplay2",
+    "kodi",
+    "kodi.bin",
+    "plex",
+    "plexmediaplayer",
+    "plex-htpc",
+    "jellyfinmediaplayer",
+    "jellyfin-mpv-shim",
+    "stremio",
+    "freetube",
+    "newpipe",
+    "pipeline",
+    "tubefeeder",
+    "hypnotix",
+    "ffplay",
+    // Music players & audio streaming apps
+    "spotify",
+    "nuclear",
+    "tidal-hifi",
+    "high-tide",
+    "qobuz",
+    "deezer",
+    "cider",
+    "apple-music",
+    "youtube-music",
+    "pear-desktop",
+    "spotube",
+    "psst",
+    "ncspot",
+    "spotifyd",
+    "elisa",
+    "strawberry",
+    "clementine",
+    "rhythmbox",
+    "amberol",
+    "lollypop",
+    "g4music",
+    "gapless",
+    "audacious",
+    "deadbeef",
+    "qmmp",
+    "cmus",
+    "mpd",
+    "cantata",
+    "amarok",
+    "pragha",
+    "sayonara",
+    "quodlibet",
+    "fooyin",
+    "tauonmb",
+    "tauon",
+    "feishin",
+    "supersonic",
+    "finamp",
+    "sonixd",
+    "harmony",
+    "plexamp",
+    "radiotray-ng",
+    "shortwave",
+    "goodvibes",
+    "gradio",
+];
+
+/// Flatpak / desktop portal application IDs for music, movie, and video applications.
+const KNOWN_MEDIA_APP_IDS: &[&str] = &[
+    "org.videolan.vlc",
+    "io.mpv.mpv",
+    "io.github.celluloid_player",
+    "org.kde.haruna",
+    "org.kde.dragonplayer",
+    "org.kde.elisa",
+    "org.gnome.totem",
+    "org.gnome.showtime",
+    "com.rafostar.clapper",
+    "tv.kodi.kodi",
+    "tv.plex.",
+    "com.github.iwalton3.jellyfin-media-player",
+    "com.stremio.stremio",
+    "io.freetubeapp.freetube",
+    "com.spotify.client",
+    "org.strawberrymusicplayer.strawberry",
+    "org.clementine_player.clementine",
+    "org.gnome.rhythmbox",
+    "io.bassi.amberol",
+    "org.gnome.lollypop",
+    "com.github.neithern.g4music",
+    "org.atheme.audacious",
+    "com.plexamp.plexamp",
+    "de.haeckerfelix.shortwave",
+];
+
+/// Keywords in `media.name` or `application.name` for web & desktop music, movie, and video streams.
+const MEDIA_KEYWORDS: &[&str] = &[
+    // Video & movie streaming / players
+    "youtube",
+    "youtu.be",
+    "netflix",
+    "disney+",
+    "disneyplus",
+    "prime video",
+    "amazon video",
+    "hulu",
+    "hbomax",
+    "max.com",
+    "peacock",
+    "paramount+",
+    "apple tv",
+    "crunchyroll",
+    "twitch",
+    "vimeo",
+    "dailymotion",
+    "nebula",
+    "curiositystream",
+    "plex",
+    "jellyfin",
+    "emby",
+    "kodi",
+    "vlc",
+    "mpv",
+    "celluloid",
+    "haruna",
+    "totem",
+    "clapper",
+    "stremio",
+    "freetube",
+    "smplayer",
+    "dragon player",
+    // Music streaming & desktop players
+    "spotify",
+    "soundcloud",
+    "tidal",
+    "deezer",
+    "qobuz",
+    "bandcamp",
+    "pandora",
+    "apple music",
+    "amazon music",
+    "iheart",
+    "tunein",
+    "mixcloud",
+    "audiomack",
+    "pocket casts",
+    "overcast",
+    "elisa",
+    "strawberry",
+    "rhythmbox",
+    "clementine",
+    "amberol",
+    "lollypop",
+    "audacious",
+    "deadbeef",
+    "plexamp",
+    "feishin",
+    "supersonic",
+];
+
+/// PipeWire / PulseAudio `media.role` values that denote music, movie, or video playback.
+const MEDIA_ROLES: &[&str] = &["music", "video", "movie"];
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_true")]
@@ -87,6 +263,8 @@ pub struct Config {
     pub detect_meeting_apps: bool,
     #[serde(default = "default_true")]
     pub detect_youtube: bool,
+    #[serde(default = "default_true")]
+    pub detect_media_apps: bool,
     #[serde(default = "default_true")]
     pub check_updates_on_startup: bool,
 }
@@ -294,6 +472,83 @@ pub struct AudioEvaluation {
     pub youtube_info: String,
 }
 
+/// Inspects a single PipeWire / PulseAudio sink-input property map to determine whether
+/// it represents active YouTube, music, movie, or video playback.
+pub fn detect_media_playback_stream(sk: &HashMap<String, String>, config: &Config) -> Option<String> {
+    if !config.detect_youtube && !config.detect_media_apps {
+        return None;
+    }
+
+    let app = sk.get("application.name").cloned().unwrap_or_default();
+    let binary = sk
+        .get("application.process.binary")
+        .cloned()
+        .unwrap_or_default()
+        .to_lowercase();
+    let media = sk.get("media.name").cloned().unwrap_or_default();
+    let role = sk
+        .get("media.role")
+        .cloned()
+        .unwrap_or_default()
+        .to_lowercase();
+    let app_id = sk
+        .get("pipewire.access.portal.app_id")
+        .or_else(|| sk.get("application.id"))
+        .cloned()
+        .unwrap_or_default()
+        .to_lowercase();
+
+    let app_lower = app.to_lowercase();
+    let media_lower = media.to_lowercase();
+
+    // Ignore speech-dispatcher dummy or EasyEffects internal streams
+    if binary.contains("speech-dispatcher")
+        || binary.contains("sd_dummy")
+        || binary.contains("easyeffects")
+        || app_lower.contains("speech-dispatcher")
+        || app_lower.contains("easyeffects")
+    {
+        return None;
+    }
+
+    let display_label = if !media.is_empty() && !app.is_empty() {
+        format!("{} ({})", media, app)
+    } else if !app.is_empty() {
+        app.clone()
+    } else if !media.is_empty() {
+        media.clone()
+    } else {
+        binary.clone()
+    };
+
+    // 1. Check native music / movie / video binaries and Flatpak app IDs
+    if config.detect_media_apps || config.detect_youtube {
+        if KNOWN_MEDIA_BINARIES.contains(&binary.as_str()) {
+            return Some(format!("Media App: {}", display_label));
+        }
+        if !app_id.is_empty() && KNOWN_MEDIA_APP_IDS.iter().any(|id| app_id.contains(id)) {
+            return Some(format!("Media App: {}", display_label));
+        }
+        if MEDIA_ROLES.contains(&role.as_str()) {
+            return Some(format!("Media ({}): {}", role, display_label));
+        }
+    }
+
+    // 2. Check YouTube, music, movie, and video streaming keywords in media.name or application.name
+    if config.detect_youtube || config.detect_media_apps {
+        if media_lower.contains("youtube") || app_lower.contains("youtube") {
+            return Some(format!("YouTube: {}", display_label));
+        }
+        for kw in MEDIA_KEYWORDS {
+            if media_lower.contains(kw) || app_lower.contains(kw) {
+                return Some(format!("Media ({}): {}", kw, display_label));
+            }
+        }
+    }
+
+    None
+}
+
 pub fn evaluate_audio_streams(config: &Config) -> AudioEvaluation {
     let mut eval = AudioEvaluation {
         meeting_active: false,
@@ -341,28 +596,37 @@ pub fn evaluate_audio_streams(config: &Config) -> AudioEvaluation {
             let media = sk.get("media.name").cloned().unwrap_or_default();
             let role = sk.get("media.role").cloned().unwrap_or_default().to_lowercase();
 
+            if binary.contains("speech-dispatcher") || binary.contains("sd_dummy") {
+                continue;
+            }
+
+            let mut is_sk_meeting = false;
+
             // Meeting detection via playback role or application
             if config.detect_meeting_apps && KNOWN_MEETING_BINARIES.contains(&binary.as_str()) {
                 eval.meeting_active = true;
+                is_sk_meeting = true;
                 eval.meeting_info = format!("Meeting app: {} ({})", app, media);
             } else if config.detect_communication_role && (role == "communication" || role == "phone") {
                 eval.meeting_active = true;
+                is_sk_meeting = true;
                 eval.meeting_info = format!("Communication audio stream ({})", app);
             } else {
                 for kw in MEETING_KEYWORDS {
                     if media.to_lowercase().contains(kw) || app.to_lowercase().contains(kw) {
                         eval.meeting_active = true;
+                        is_sk_meeting = true;
                         eval.meeting_info = format!("Meeting detected: {}", kw);
                         break;
                     }
                 }
             }
 
-            // YouTube playback detection (only when actively playing sound)
-            if config.detect_youtube && is_playing {
-                if media.to_lowercase().contains("youtube") || app.to_lowercase().contains("youtube") {
+            // YouTube, Music, Movie & Video playback detection (only when actively playing sound)
+            if !is_sk_meeting && is_playing {
+                if let Some(info) = detect_media_playback_stream(&sk, config) {
                     eval.youtube_playing = true;
-                    eval.youtube_info = format!("YouTube: {} ({})", media, app);
+                    eval.youtube_info = info;
                 }
             }
         }
@@ -693,5 +957,47 @@ mod tests {
 
         let current = parse_github_release_json(raw, "0.2.0").expect("valid json");
         assert!(!current.update_available);
+    }
+
+    #[test]
+    fn test_detect_music_movie_and_video_applications() {
+        let cfg = Config::default();
+
+        // 1. Native video player binary (VLC / mpv)
+        let mut vlc = HashMap::new();
+        vlc.insert("application.name".to_string(), "VLC media player".to_string());
+        vlc.insert("application.process.binary".to_string(), "vlc".to_string());
+        vlc.insert("media.name".to_string(), "Interstellar.mkv".to_string());
+        let vlc_res = detect_media_playback_stream(&vlc, &cfg);
+        assert!(vlc_res.is_some());
+        assert!(vlc_res.unwrap().contains("Interstellar.mkv"));
+
+        // 2. Native music player binary (Spotify / Elisa)
+        let mut spotify = HashMap::new();
+        spotify.insert("application.name".to_string(), "Spotify".to_string());
+        spotify.insert("application.process.binary".to_string(), "spotify".to_string());
+        spotify.insert("media.name".to_string(), "Daft Punk - Harder, Better, Faster, Stronger".to_string());
+        assert!(detect_media_playback_stream(&spotify, &cfg).is_some());
+
+        // 3. PipeWire media.role = "music" or "video" or "movie"
+        let mut role_video = HashMap::new();
+        role_video.insert("application.name".to_string(), "CustomPlayer".to_string());
+        role_video.insert("media.role".to_string(), "video".to_string());
+        role_video.insert("media.name".to_string(), "Movie Stream".to_string());
+        assert!(detect_media_playback_stream(&role_video, &cfg).is_some());
+
+        // 4. Web streaming movie / video in browser (Netflix / Plex / Twitch)
+        let mut browser_movie = HashMap::new();
+        browser_movie.insert("application.name".to_string(), "Zen".to_string());
+        browser_movie.insert("application.process.binary".to_string(), "zen".to_string());
+        browser_movie.insert("media.name".to_string(), "Netflix".to_string());
+        assert!(detect_media_playback_stream(&browser_movie, &cfg).is_some());
+
+        // 5. Speech dispatcher dummy should be ignored
+        let mut dummy = HashMap::new();
+        dummy.insert("application.name".to_string(), "speech-dispatcher-dummy".to_string());
+        dummy.insert("application.process.binary".to_string(), "sd_dummy".to_string());
+        dummy.insert("media.role".to_string(), "music".to_string());
+        assert!(detect_media_playback_stream(&dummy, &cfg).is_none());
     }
 }
