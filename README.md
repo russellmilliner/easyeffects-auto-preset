@@ -178,13 +178,14 @@ chmod +x scripts/build-flatpak.sh
 
 ## 🛠️ Interactive Release & GitHub Sync Scripts
 
-The `scripts/` directory includes interactive automation scripts (which also support non-interactive `--yes` CLI flags):
+Interactive multi-project release and sync scripts are located in the parent workspace directory (`/home/millinr/Builds/`) and let you choose which project to work on interactively:
 
 | Script | Purpose & Usage |
 | :--- | :--- |
-| [**`./scripts/bump-version.sh`**](scripts/bump-version.sh) | Interactively increments Patch, Minor, Major, or Custom version across `Cargo.toml`, `src/main.rs`, `python/easyeffects_auto_preset.py`, `README.md`, AppStream `metainfo.xml`, and optionally regenerates UI screenshots.<br>`./scripts/bump-version.sh` *(interactive)* or `./scripts/bump-version.sh --minor -y` |
-| [**`./scripts/sync-github.sh`**](scripts/sync-github.sh) | Interactively stages files (`all`, `tracked`, or `patch`), prompts for a commit message, optionally creates an annotated git tag `vX.Y.Z`, and pushes to GitHub.<br>`./scripts/sync-github.sh` *(interactive)* or `./scripts/sync-github.sh -m "feat: update" -y` |
-| [**`./scripts/deploy-release.sh`**](scripts/deploy-release.sh) | End-to-end release pipeline: optional version bump → unit & syntax tests → Rust binary + Linux `.tar.gz` + Flatpak bundle + SHA-256 checksums → optional local systemd service update → git commit/tag/push → GitHub Release creation/upload via `gh`.<br>`./scripts/deploy-release.sh` *(interactive)* or `./scripts/deploy-release.sh --patch -y` |
+| **`../release-menu.sh`** | Unified interactive menu: choose which project in `~/Builds` to work on, then choose whether to bump version, sync to GitHub, deploy a release, or run tests. |
+| **`../bump-version.sh`** | Select a project and interactively increment Patch, Minor, Major, or Custom version across `Cargo.toml`, `src/main.rs`, `python/easyeffects_auto_preset.py`, `README.md`, AppStream `metainfo.xml`, and UI screenshots. |
+| **`../sync-github.sh`** | Select a project and interactively stage files (`all`, `tracked`, or `patch`), commit, optionally tag `vX.Y.Z`, and push to GitHub. |
+| **`../deploy-release.sh`** | Select a project and run the end-to-end release pipeline (optional version bump → tests → Rust binary + Linux `.tar.gz` + Flatpak bundle + SHA-256 checksums → git tag/push → GitHub Release creation via `gh`). |
 
 ---
 
