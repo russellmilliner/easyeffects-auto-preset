@@ -4,18 +4,17 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>Apache-2.0</project_license>
   <name>EasyEffects Auto Preset</name>
-  <summary>Automated EasyEffects preset switcher for YouTube and Voice Meetings</summary>
+  <summary>Automated EasyEffects preset switcher for Voice Meetings, YouTube, Music, Movies, and Video</summary>
   <description>
     <p>
-      EasyEffects Auto Preset is an intelligent, high-performance preset manager and switcher for EasyEffects on Linux.
-      Powered by PipeWire and PulseAudio audio stream monitoring, it seamlessly switches your output effects
-      depending on active audio activity:
+      EasyEffects Auto Preset is an intelligent, context-aware audio preset manager and automatic switcher for EasyEffects on Linux (PipeWire and PulseAudio).
+      Instead of manually switching equalizers and compressors every time you join a work call or play a video, EasyEffects Auto Preset continuously inspects active audio streams in real time and applies the right DSP profile automatically:
     </p>
     <ul>
-      <li>Automatically engages bass-boosted and dynamic presets (e.g. Crystal more Bass) when YouTube or media is playing.</li>
-      <li>Automatically engages voice-optimized presets (e.g. Compressed-Max or Meeting-Voice-Clear) when any voice meeting or call is active (Google Meet, Zoom, Microsoft Teams, Slack, Discord, or active microphone input).</li>
-      <li>Restores default settings cleanly with configurable debounce delay when audio ends.</li>
-      <li>Offers both a native, ultra-lightweight Rust daemon and a feature-complete PyQt6 Settings &amp; Tray manager.</li>
+      <li>Voice Meetings (Highest Priority): Automatically switches to a speech-focused preset (such as Compressed-Max or Meeting-Voice-Clear) and optional microphone cleanup preset whenever a voice call or microphone stream is active (Google Meet, Zoom, Microsoft Teams, Slack, Discord, Webex, or communication streams).</li>
+      <li>YouTube, Music, Movies &amp; Video: Automatically switches to a rich media preset (such as Crystal more Bass) whenever YouTube, streaming video (Netflix, Disney+, Prime Video, Twitch, Plex), or any music/movie/video player (Spotify, VLC, mpv, Elisa, Haruna, Celluloid, Kodi, Jellyfin, Rhythmbox) is actively playing sound.</li>
+      <li>Smart Debouncing: Configurable grace period prevents abrupt preset flapping when pausing tracks, skipping ads, or between speakers in a meeting.</li>
+      <li>Dual Architecture: Includes both a native, zero-overhead Rust background daemon (&lt;4MB RAM) and a full-featured PyQt6 Settings GUI &amp; System Tray manager with live stream inspection and built-in GitHub Releases update checking.</li>
     </ul>
   </description>
   <launchable type="desktop-id">io.github.russellmilliner.easyeffects_auto_preset.desktop</launchable>
@@ -23,6 +22,24 @@
   <url type="bugtracker">https://github.com/russellmilliner/easyeffects-auto-preset/issues</url>
   <url type="donation">https://ko-fi.com/russellmilliner</url>
   <developer_name>Russell Milliner</developer_name>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Preset Triggers &amp; Detection Rules</caption>
+      <image>https://raw.githubusercontent.com/russellmilliner/easyeffects-auto-preset/main/docs/screenshots/preset-triggers.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Real-Time PipeWire / PulseAudio Live Audio Stream Inspector</caption>
+      <image>https://raw.githubusercontent.com/russellmilliner/easyeffects-auto-preset/main/docs/screenshots/live-audio-streams.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>How It Works, Bundled Presets &amp; Update Checker</caption>
+      <image>https://raw.githubusercontent.com/russellmilliner/easyeffects-auto-preset/main/docs/screenshots/preset-details.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Dynamic System Tray Status Badges</caption>
+      <image>https://raw.githubusercontent.com/russellmilliner/easyeffects-auto-preset/main/docs/screenshots/tray-icons.png</image>
+    </screenshot>
+  </screenshots>
   <categories>
     <category>AudioVideo</category>
     <category>Audio</category>
@@ -33,6 +50,11 @@
     <binary>easyeffects-auto-preset-gui</binary>
   </provides>
   <releases>
+    <release version="0.2.0" date="2026-10-21">
+      <description>
+        <p>Added automatic detection for all music, movie, and video applications and streaming services, built-in GitHub Releases update checker (GUI, System Tray, and CLI), expanded documentation, and UI screenshots.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-10-20">
       <description>
         <p>Initial release featuring native Rust daemon, PyQt6 Tray manager, Flatpak packaging, and custom voice meeting presets.</p>

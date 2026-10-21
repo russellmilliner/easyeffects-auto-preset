@@ -55,7 +55,7 @@ APP_ICON_FILE = CONFIG_DIR / "app-icon.png"
 AUTOSTART_FILE = Path.home() / ".config" / "autostart" / "easyeffects-auto-preset.desktop"
 APP_DESKTOP_FILE = Path.home() / ".local" / "share" / "applications" / "easyeffects-auto-preset.desktop"
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.2.0"
 GITHUB_RELEASES_API_URL = "https://api.github.com/repos/russellmilliner/easyeffects-auto-preset/releases/latest"
 GITHUB_RELEASES_PAGE_URL = "https://github.com/russellmilliner/easyeffects-auto-preset/releases"
 
@@ -721,7 +721,7 @@ class MainWindow(QMainWindow):
         self._first_minimize_tip_shown = False
 
         self.setWindowTitle("EasyEffects Auto Preset Manager")
-        self.resize(720, 560)
+        self.resize(800, 720)
         self.setWindowIcon(QIcon(str(APP_ICON_FILE)) if APP_ICON_FILE.is_file() else build_tray_icon())
 
         self._init_ui()
@@ -803,7 +803,7 @@ class MainWindow(QMainWindow):
         layout_presets = QVBoxLayout(tab_presets)
         layout_presets.setSpacing(16)
 
-        grp_mapping = QGroupBox("Preset Triggers & Rules", tab_presets)
+        grp_mapping = QGroupBox("Preset Triggers && Rules", tab_presets)
         grid = QGridLayout(grp_mapping)
         grid.setSpacing(12)
 
@@ -845,7 +845,7 @@ class MainWindow(QMainWindow):
 
         self.chk_detect_mic = QCheckBox("Detect active microphone (Google Meet, Zoom, Teams, Slack, Discord)", grp_detect)
         self.chk_detect_comm = QCheckBox("Detect communication audio streams (media.role = phone/communication)", grp_detect)
-        self.chk_detect_yt = QCheckBox("Detect YouTube, music, movie & video playback (browsers, Spotify, VLC, mpv, Plex, Kodi, etc.)", grp_detect)
+        self.chk_detect_yt = QCheckBox("Detect YouTube, music, movie && video playback (browsers, Spotify, VLC, mpv, Plex, Kodi, etc.)", grp_detect)
 
         vbox_detect.addWidget(self.chk_detect_mic)
         vbox_detect.addWidget(self.chk_detect_comm)
@@ -891,20 +891,24 @@ class MainWindow(QMainWindow):
         tab_about = QWidget()
         layout_about = QVBoxLayout(tab_about)
         info_text = QLabel(
-            "<h3>EasyEffects Presets Overview</h3>"
-            "<ul>"
-            "<li><b>Crystal more Bass:</b> Tuned for music, gaming, and YouTube video playback with rich low-end punch and crystalline highs.</li>"
-            "<li><b>Compressed-Max:</b> Extreme dynamic range compressor + maximizer to level out volume spikes.</li>"
-            "<li><b>Meeting-Voice-Clear (New):</b> Custom designed for voice meetings:"
-            "  <ul>"
-            "    <li><b>Tones down bass:</b> Aggressive high-pass shelf (-32 dB at 32Hz, -24 dB at 64Hz) to eliminate table bumps, HVAC drone, and proximity rumble.</li>"
-            "    <li><b>Levels out people:</b> Fast-attack compressor + 24 dB maximizer to bring quiet whisperers and loud talkers to the same comfortable level.</li>"
-            "    <li><b>Noise & Reverb Suppression:</b> Speex denoiser (-70 dB) and automatic dereverberation to clean up echoey rooms and background hiss.</li>"
-            "  </ul>"
-            "</li>"
-            "<li><b>Meeting-Mic-Clean (Input):</b> Noise cancellation and AGC specifically tuned for your microphone stream.</li>"
+            "<b>How EasyEffects Auto Preset Works</b><br>"
+            "Continuously inspects active PipeWire / PulseAudio streams and switches your EasyEffects "
+            "preset automatically using a <b>3-tier priority engine</b> with grace-period debouncing:"
+            "<ol style='margin-top:4px; margin-bottom:6px;'>"
+            "<li><b>Priority 1 — Voice Meetings (Highest):</b> Active microphone recording or meeting stream "
+            "(Google Meet, Zoom, Teams, Slack, Discord, Webex, or <code>media.role=phone/communication</code>).</li>"
+            "<li><b>Priority 2 — YouTube, Music, Movies &amp; Video:</b> Active playback in browsers "
+            "(YouTube, YouTube Music, Netflix, Disney+, Prime Video, Twitch, Plex, SoundCloud) or media apps "
+            "(Spotify, VLC, mpv, Elisa, Haruna, Celluloid, Kodi, Jellyfin, Rhythmbox, etc.).</li>"
+            "<li><b>Priority 3 — Default / Idle:</b> Restored after the debounce delay once media/calls end.</li>"
+            "</ol>"
+            "<b>Bundled EasyEffects Presets</b>"
+            "<ul style='margin-top:4px; margin-bottom:4px;'>"
+            "<li><b>Crystal more Bass:</b> Rich low-end punch and crisp highs tuned for music, movies, and YouTube.</li>"
+            "<li><b>Compressed-Max:</b> Dynamic range compressor + maximizer to level out volume spikes.</li>"
+            "<li><b>Meeting-Voice-Clear:</b> Custom voice-call DSP — cuts low rumble (-32 dB at 32Hz), boosts 1.5–4kHz speech clarity, suppresses room noise/echo (Speex -70 dB), and levels quiet/loud speakers.</li>"
+            "<li><b>Meeting-Mic-Clean (Input):</b> Outbound microphone noise cancellation, dereverberation, and AGC.</li>"
             "</ul>"
-            "<p><i>Presets are stored in <code>~/.var/app/com.github.wwmm.easyeffects/data/easyeffects/</code></i></p>"
         )
         info_text.setWordWrap(True)
         layout_about.addWidget(info_text)

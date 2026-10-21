@@ -1,9 +1,9 @@
 [package]
 name = "easyeffects-auto-preset"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Russell Milliner <russell.milliner@gmail.com>"]
-description = "Automated EasyEffects preset switcher for YouTube and Voice Meetings on Linux (PipeWire / KDE Plasma)"
+description = "Automated EasyEffects preset switcher for Voice Meetings, YouTube, Music, Movies, and Video on Linux (PipeWire / KDE Plasma)"
 license = "Apache-2.0"
 repository = "https://github.com/russellmilliner/easyeffects-auto-preset"
 keywords = ["easyeffects", "audio", "pipewire", "pulseaudio", "preset-switcher"]
