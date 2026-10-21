@@ -27,6 +27,7 @@ const DEFAULT_CONFIG_JSON: &str = r#"{
   "detect_meeting_apps": true,
   "detect_youtube": true,
   "detect_media_apps": true,
+  "pause_media_in_meetings": true,
   "check_updates_on_startup": true
 }"#;
 
@@ -265,6 +266,8 @@ pub struct Config {
     pub detect_youtube: bool,
     #[serde(default = "default_true")]
     pub detect_media_apps: bool,
+    #[serde(default = "default_true")]
+    pub pause_media_in_meetings: bool,
     #[serde(default = "default_true")]
     pub check_updates_on_startup: bool,
 }
@@ -743,7 +746,205 @@ pub fn check_for_updates(current_version: &str) -> Result<UpdateCheckResult, Str
     parse_github_release_json(&body, current_version)
 }
 
-pub fn run_daemon(config: Config) {
+pub fn pause_active_media_players() -> Vec<String> {
+    let mut paused = Vec::new();
+    let mut services = Vec::new();
+
+    if let Ok(out) = Command::new("busctl").args(["--user", "list", "--no-legend"]).output() {
+        let text = String::from_utf8_lossy(&out.stdout);
+        for line in text.lines() {
+            if let Some(svc) = line.split_whitespace().next() {
+                if svc.starts_with("org.mpris.MediaPlayer2.") {
+                    services.push(svc.to_string());
+                }
+            }
+        }
+    }
+
+    for svc in services {
+        let svc_lower = svc.to_lowercase();
+        if ["zoom", "teams", "slack", "discord", "webex", "skype"]
+            .iter()
+            .any(|m| svc_lower.contains(m))
+        {
+            continue;
+        }
+
+        let is_playing = Command::new("busctl")
+            .args([
+                "--user",
+                "get-property",
+                &svc,
+                "/org/mpris/MediaPlayer2",
+                "org.mpris.MediaPlayer2.Player",
+                "PlaybackStatus",
+            ])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("\"Playing\""))
+            .unwrap_or(false);
+
+        if !is_playing {
+            continue;
+        }
+
+        let is_meeting_tab = Command::new("busctl")
+            .args([
+                "--user",
+                "get-property",
+                &svc,
+                "/org/mpris/MediaPlayer2",
+                "org.mpris.MediaPlayer2.Player",
+                "Metadata",
+            ])
+            .output()
+            .map(|o| {
+                let meta = String::from_utf8_lossy(&o.stdout).to_lowercase();
+                MEETING_KEYWORDS.iter().any(|kw| meta.contains(kw))
+            })
+            .unwrap_or(false);
+
+        if is_meeting_tab {
+            continue;
+        }
+
+        let ok = Command::new("busctl")
+            .args([
+                "--user",
+                "call",
+                &svc,
+                "/org/mpris/MediaPlayer2",
+                "org.mpris.MediaPlayer2.Player",
+                "Pause",
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if !ok {
+            let _ = Command::new("dbus-send")
+                .args([
+                    "--session",
+                    "--type=method_call",
+                    &format!("--dest={}", svc),
+                    "/org/mpris/MediaPlayer2",
+                    "org.mpris.MediaPlayer2.Player.Pause",
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+
+        let short_name = svc
+            .trim_start_matches("org.mpris.MediaPlayer2.")
+            .split('.')
+            .next()
+            .unwrap_or(&svc)
+            .to_string();
+        paused.push(short_name);
+    }
+
+    paused
+}
+
+pub fn enforce_single_instance_rust() {
+    let my_pid = std::process::id();
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let cfg_dir = PathBuf::from(home).join(".config").join("easyeffects-auto-preset");
+    let _ = fs::create_dir_all(&cfg_dir);
+    let pid_file = cfg_dir.join("instance.pid");
+
+    let mut candidate_pids = Vec::new();
+    if let Ok(content) = fs::read_to_string(&pid_file) {
+        if let Ok(old_pid) = content.trim().parse::<u32>() {
+            if old_pid > 1 && old_pid != my_pid {
+                candidate_pids.push(old_pid);
+            }
+        }
+    }
+
+    if let Ok(entries) = fs::read_dir("/proc") {
+        for entry in entries.flatten() {
+            if let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() {
+                if pid <= 1 || pid == my_pid {
+                    continue;
+                }
+                let cmdline_path = entry.path().join("cmdline");
+                if let Ok(raw) = fs::read(&cmdline_path) {
+                    let args: Vec<String> = raw
+                        .split(|&b| b == 0)
+                        .filter(|s| !s.is_empty())
+                        .map(|s| String::from_utf8_lossy(s).to_string())
+                        .collect();
+                    if args.is_empty() {
+                        continue;
+                    }
+                    let joined = args.join(" ");
+                    let is_target = joined.contains("easyeffects-auto-preset")
+                        || joined.contains("easyeffects_auto_preset.py");
+                    let is_one_shot = args.iter().skip(1).any(|a| {
+                        matches!(
+                            a.as_str(),
+                            "--status"
+                                | "-s"
+                                | "--cli-status"
+                                | "--switch"
+                                | "--list-presets"
+                                | "-l"
+                                | "--install-presets"
+                                | "--check-deps"
+                                | "--check-update"
+                                | "-u"
+                                | "--version"
+                                | "-V"
+                                | "--help"
+                                | "-h"
+                        )
+                    });
+                    if is_target && !is_one_shot && !candidate_pids.contains(&pid) {
+                        candidate_pids.push(pid);
+                    }
+                }
+            }
+        }
+    }
+
+    for pid in &candidate_pids {
+        println!("[*] Terminating previous easyeffects-auto-preset instance (PID {})...", pid);
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    if !candidate_pids.is_empty() {
+        for _ in 0..30 {
+            let any_alive = candidate_pids
+                .iter()
+                .any(|p| Path::new(&format!("/proc/{}", p)).exists());
+            if !any_alive {
+                break;
+            }
+            sleep(Duration::from_millis(50));
+        }
+        for pid in &candidate_pids {
+            if Path::new(&format!("/proc/{}", pid)).exists() {
+                let _ = Command::new("kill")
+                    .args(["-KILL", &pid.to_string()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        }
+    }
+
+    let _ = fs::write(&pid_file, format!("{}\n", my_pid));
+}
+
+fn run_daemon(config: Config) {
+    enforce_single_instance_rust();
     println!("EasyEffects Auto Preset Rust Daemon v{} starting...", APP_VERSION);
     println!("  YouTube Preset: {}", config.youtube_preset);
     println!("  Meeting Preset: {}", config.meeting_preset);
@@ -784,6 +985,15 @@ pub fn run_daemon(config: Config) {
             target_mode = "meeting".to_string();
             reason = eval.meeting_info;
             meeting_lost_at = None;
+            if config.pause_media_in_meetings {
+                let paused = pause_active_media_players();
+                if !paused.is_empty() {
+                    println!(
+                        "[*] Paused active media application(s) during meeting: {}",
+                        paused.join(", ")
+                    );
+                }
+            }
         } else {
             if current_mode == "meeting" {
                 let lost = meeting_lost_at.get_or_insert(now);
@@ -841,7 +1051,7 @@ pub fn run_daemon(config: Config) {
 #[command(
     name = "easyeffects-auto-preset",
     author = "Russell Milliner <russell.milliner@gmail.com>",
-    version = "0.3.0",
+    version = "0.4.0",
     about = "Automated EasyEffects preset switcher for Voice Meetings, YouTube, Music, Movies, and Video on Linux (PipeWire / KDE Plasma)"
 )]
 struct Args {
@@ -861,14 +1071,142 @@ struct Args {
     #[arg(short, long)]
     list_presets: bool,
 
+    /// Install all bundled Meeting-Voice and Media presets into EasyEffects and exit
+    #[arg(long)]
+    install_presets: bool,
+
+    /// Check if EasyEffects and required audio packages are installed and exit
+    #[arg(long)]
+    check_deps: bool,
+
     /// Check GitHub Releases for a newer version and exit
     #[arg(short = 'u', long)]
     check_update: bool,
 }
 
+const BUNDLED_OUTPUT_PRESETS: &[(&str, &str)] = &[
+    ("Meeting-Voice-Clear", include_str!("../presets/Meeting-Voice-Clear.json")),
+    ("Meeting-Voice-Clear-Max-Level", include_str!("../presets/Meeting-Voice-Clear-Max-Level.json")),
+    ("Meeting-Voice-Deep", include_str!("../presets/Meeting-Voice-Deep.json")),
+    ("Meeting-Breath-Block-Max", include_str!("../presets/Meeting-Breath-Block-Max.json")),
+    ("Meeting-Voice-Deep-Breath-Max", include_str!("../presets/Meeting-Voice-Deep-Breath-Max.json")),
+    ("Crystal more Bass", include_str!("../presets/Crystal more Bass.json")),
+    ("Compressed-Max", include_str!("../presets/Compressed-Max.json")),
+];
+
+const BUNDLED_INPUT_PRESETS: &[(&str, &str)] = &[
+    ("Meeting-Mic-Clean", include_str!("../presets/Meeting-Mic-Clean.json")),
+];
+
+fn which_exists(bin: &str) -> bool {
+    Command::new("which")
+        .arg(bin)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+pub fn install_bundled_presets_rust() -> usize {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let flatpak_dir = Path::new(&home).join(".var/app/com.github.wwmm.easyeffects/data/easyeffects");
+    let xdg_data = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| format!("{}/.local/share", home));
+    let native_dir = Path::new(&xdg_data).join("easyeffects");
+
+    let mut targets = Vec::new();
+    if flatpak_dir.parent().map(|p| p.exists()).unwrap_or(false) {
+        targets.push(flatpak_dir.clone());
+    }
+    if which_exists("easyeffects") || native_dir.exists() {
+        targets.push(native_dir.clone());
+    }
+    if targets.is_empty() {
+        targets.push(flatpak_dir);
+        targets.push(native_dir);
+    }
+
+    let mut count = 0;
+    for (name, content) in BUNDLED_OUTPUT_PRESETS {
+        for base in &targets {
+            let out_dir = base.join("output");
+            let _ = fs::create_dir_all(&out_dir);
+            let _ = fs::write(out_dir.join(format!("{}.json", name)), content);
+        }
+        count += 1;
+    }
+    for (name, content) in BUNDLED_INPUT_PRESETS {
+        for base in &targets {
+            let in_dir = base.join("input");
+            let _ = fs::create_dir_all(&in_dir);
+            let _ = fs::write(in_dir.join(format!("{}.json", name)), content);
+        }
+        count += 1;
+    }
+    count
+}
+
+pub fn check_dependencies_rust() -> bool {
+    let native_ee = which_exists("easyeffects");
+    let flatpak_ee = Command::new("flatpak")
+        .args(["info", "com.github.wwmm.easyeffects"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    let ee_ok = native_ee || flatpak_ee;
+    let pactl_ok = which_exists("pactl");
+    let pw_ok = which_exists("pw-cli") || which_exists("pipewire");
+
+    println!("EasyEffects Auto Preset — System Dependency Check");
+    println!("------------------------------------------------------------");
+    println!(
+        "{} EasyEffects [Required]: {}",
+        if ee_ok { "✅" } else { "❌" },
+        if flatpak_ee && native_ee {
+            "Installed (Native + Flatpak)"
+        } else if flatpak_ee {
+            "Installed (Flatpak: com.github.wwmm.easyeffects)"
+        } else if native_ee {
+            "Installed (Native: easyeffects)"
+        } else {
+            "MISSING — Install via package manager or `flatpak install flathub com.github.wwmm.easyeffects`"
+        }
+    );
+    println!(
+        "{} pactl (PulseAudio/PipeWire CLI) [Required]: {}",
+        if pactl_ok { "✅" } else { "❌" },
+        if pactl_ok { "Installed" } else { "MISSING — Install `libpulse` or `pulseaudio-utils`" }
+    );
+    println!(
+        "{} PipeWire [Recommended]: {}",
+        if pw_ok { "✅" } else { "⚠️" },
+        if pw_ok { "Installed" } else { "Not found in PATH" }
+    );
+    ee_ok && pactl_ok
+}
+
 fn main() {
     let args = Args::parse();
     let config = load_config();
+
+    if args.install_presets {
+        let count = install_bundled_presets_rust();
+        println!("Successfully installed {} bundled presets into EasyEffects:", count);
+        for (name, _) in BUNDLED_OUTPUT_PRESETS {
+            println!("  • {} (Output)", name);
+        }
+        for (name, _) in BUNDLED_INPUT_PRESETS {
+            println!("  • {} (Input)", name);
+        }
+        std::process::exit(0);
+    }
+
+    if args.check_deps {
+        let ok = check_dependencies_rust();
+        std::process::exit(if ok { 0 } else { 1 });
+    }
 
     if args.check_update {
         println!("Checking for updates (current version: v{})...", APP_VERSION);

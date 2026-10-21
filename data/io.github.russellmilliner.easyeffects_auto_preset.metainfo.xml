@@ -50,6 +50,11 @@
     <binary>easyeffects-auto-preset-gui</binary>
   </provides>
   <releases>
+    <release version="0.4.0" date="2026-10-21">
+      <description>
+        <p>Added feature for pause media during meetings.  ensure only one instance running at a time</p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-10-21">
       <description>
         <p>Added visible version badges and version info across the main application header, window title, system tray context menu, tray hover tooltip, and CLI.</p>

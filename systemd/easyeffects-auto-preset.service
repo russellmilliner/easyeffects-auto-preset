@@ -10,6 +10,7 @@ Type=simple
 # ExecStart=%h/.local/bin/easyeffects-auto-preset --minimized
 ExecStart=/usr/bin/env easyeffects-auto-preset-gui --minimized
 Restart=on-failure
+SuccessExitStatus=0 15 SIGTERM SIGKILL
 RestartSec=3
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
 

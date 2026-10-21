@@ -16,7 +16,8 @@ finish-args:
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.freedesktop.Flatpak
   - --filesystem=xdg-config/easyeffects-auto-preset:create
-  - --filesystem=~/.var/app/com.github.wwmm.easyeffects:ro
+  - --filesystem=xdg-data/easyeffects:create
+  - --filesystem=~/.var/app/com.github.wwmm.easyeffects:create
 
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin

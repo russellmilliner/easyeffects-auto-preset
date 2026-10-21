@@ -63,7 +63,8 @@ else
     --talk-name=org.kde.StatusNotifierWatcher \
     --talk-name=org.freedesktop.Notifications \
     --filesystem=xdg-config/easyeffects-auto-preset:create \
-    --filesystem=~/.var/app/com.github.wwmm.easyeffects:ro
+    --filesystem=xdg-data/easyeffects:create \
+    --filesystem=~/.var/app/com.github.wwmm.easyeffects:create
 
   flatpak build-export "$WORK_DIR/repo" "$WORK_DIR/build-dir" stable
   flatpak build-bundle "$WORK_DIR/repo" "$OUT_DIR/$BUNDLE_NAME" "$APP_ID" stable --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo

@@ -1,7 +1,7 @@
 # EasyEffects Auto Preset
 
-[![Version](https://img.shields.io/badge/Version-v0.3.0-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/easyeffects-auto-preset/releases/tag/v0.3.0)
-[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.3.0-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.3.0/easyeffects-auto-preset-v0.3.0-x86_64.flatpak)
+[![Version](https://img.shields.io/badge/Version-v0.4.0-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/easyeffects-auto-preset/releases/tag/v0.4.0)
+[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.4.0-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.4.0/easyeffects-auto-preset-v0.4.0-x86_64.flatpak)
 [![Platform: Linux x86_64](https://img.shields.io/badge/Platform-Linux%20x86__64-fcc624?style=for-the-badge&logo=linux&logoColor=black)](https://www.kernel.org/)
 [![Desktop: KDE Plasma 6](https://img.shields.io/badge/Desktop-KDE%20Plasma%206%20%2F%20Qt%206-1d99f3?style=for-the-badge&logo=kde&logoColor=white)](https://kde.org/plasma-desktop/)
 [![Audio: PipeWire](https://img.shields.io/badge/Audio-PipeWire%20%2F%20PulseAudio-e05d44?style=for-the-badge&logo=soundcharts&logoColor=white)](https://pipewire.org/)
@@ -49,19 +49,19 @@ When you skip a track on Spotify, buffer a YouTube video, or pause between sente
 
 ---
 
-## 📥 Release & Downloads (`v0.3.0`)
+## 📥 Release & Downloads (`v0.4.0`)
 
 | Asset | Download Link | Description |
 | :--- | :--- | :--- |
-| **Flatpak Bundle (`x86_64`)** | [**`easyeffects-auto-preset-v0.3.0-x86_64.flatpak`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.3.0/easyeffects-auto-preset-v0.3.0-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.3.0/easyeffects-auto-preset-v0.3.0-x86_64.flatpak.sha256)) | Self-contained Flatpak bundle (`org.kde.Platform//6.11`) with Rust daemon, PyQt6 GUI & bundled presets |
-| **Linux Release Archive (`x86_64`)** | [**`easyeffects-auto-preset-v0.3.0-linux-x86_64.tar.gz`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.3.0/easyeffects-auto-preset-v0.3.0-linux-x86_64.tar.gz) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.3.0/easyeffects-auto-preset-v0.3.0-linux-x86_64.tar.gz.sha256)) | Native Rust daemon binary, PyQt6 GUI & tray script, custom EasyEffects presets, systemd user service & desktop entry |
-| **Standalone Rust Daemon (`x86_64`)** | [**`easyeffects-auto-preset-v0.3.0-x86_64`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.3.0/easyeffects-auto-preset-v0.3.0-x86_64) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.3.0/easyeffects-auto-preset-v0.3.0-x86_64.sha256)) | Standalone compiled Rust CLI/daemon binary |
+| **Flatpak Bundle (`x86_64`)** | [**`easyeffects-auto-preset-v0.4.0-x86_64.flatpak`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.4.0/easyeffects-auto-preset-v0.4.0-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.4.0/easyeffects-auto-preset-v0.4.0-x86_64.flatpak.sha256)) | Self-contained Flatpak bundle (`org.kde.Platform//6.11`) with Rust daemon, PyQt6 GUI & bundled presets |
+| **Linux Release Archive (`x86_64`)** | [**`easyeffects-auto-preset-v0.4.0-linux-x86_64.tar.gz`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.4.0/easyeffects-auto-preset-v0.4.0-linux-x86_64.tar.gz) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.4.0/easyeffects-auto-preset-v0.4.0-linux-x86_64.tar.gz.sha256)) | Native Rust daemon binary, PyQt6 GUI & tray script, custom EasyEffects presets, systemd user service & desktop entry |
+| **Standalone Rust Daemon (`x86_64`)** | [**`easyeffects-auto-preset-v0.4.0-x86_64`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.4.0/easyeffects-auto-preset-v0.4.0-x86_64) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.4.0/easyeffects-auto-preset-v0.4.0-x86_64.sha256)) | Standalone compiled Rust CLI/daemon binary |
 
 ### Quick Flatpak Install (from GitHub Release)
 
 ```bash
-curl -LO https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.3.0/easyeffects-auto-preset-v0.3.0-x86_64.flatpak
-flatpak install --user -y easyeffects-auto-preset-v0.3.0-x86_64.flatpak
+curl -LO https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.4.0/easyeffects-auto-preset-v0.4.0-x86_64.flatpak
+flatpak install --user -y easyeffects-auto-preset-v0.4.0-x86_64.flatpak
 flatpak run io.github.russellmilliner.easyeffects_auto_preset
 ```
 
@@ -81,6 +81,7 @@ If you find EasyEffects Auto Preset helpful for your audio workflow and meetings
 
 - 🎧 **Universal Music, Movie, Video & YouTube Detection:** Automatically switches to your media preset (**`Crystal more Bass`**) whenever audio is actively playing in web browsers (YouTube, YouTube Music, Netflix, Disney+, Prime Video, Twitch, Plex, SoundCloud, etc.) or native desktop media players (Spotify, VLC, mpv, Celluloid, Haruna, Elisa, Strawberry, Rhythmbox, Amberol, Lollypop, Audacious, Kodi, Plex, Jellyfin, Stremio, FreeTube).
 - 🎤 **Automatic Voice Meeting Detection (Top Priority):** Immediately switches to **`Compressed-Max`** or **`Meeting-Voice-Clear`** (plus optional **`Meeting-Mic-Clean`** input preset) whenever a voice meeting or microphone stream is active.
+- ⏸️ **Auto-Pause Media During Meetings (Configurable):** Automatically pauses any active MPRIS2 media applications (YouTube/browsers, Spotify, VLC, mpv, Elisa, etc.) when a meeting starts and ensures they remain paused for the duration of the call. Can be toggled on/off in Settings or directly from the System Tray menu.
 - 🔄 **Smart Grace-Period Debouncing:** Configurable delay (default `2.0s`) prevents abrupt preset flapping during track changes, video buffering, or brief pauses in conversation.
 - 🦀 **Dual Architecture (Rust + Python/Qt6):**
   - **Native Rust CLI & Daemon (`easyeffects-auto-preset`):** Memory-safe, zero-overhead background engine consuming **<4MB RSS** and ~0% CPU.
@@ -91,6 +92,9 @@ If you find EasyEffects Auto Preset helpful for your audio workflow and meetings
   - ⚪ **Slate pip:** System idle / default preset
   - 🔴 **Red pip:** Auto-switching paused
 - 🔔 **Built-in Update Checker:** Automatic startup update checks and manual one-click update checks via the GUI, system tray menu (`Check for Updates...`), and CLI (`--check-update` / `-u`) against GitHub Releases.
+- 📦 **Packaged Meeting-Voice & Media Presets:** Bundles all 8 custom EasyEffects presets directly inside the application. Offers to install them on first launch, and allows installing or restoring them anytime later from the GUI (**`📦 Install / Restore Bundled Presets...`**), the System Tray menu, or the CLI (`--install-presets`).
+- 🩺 **System & Dependency Checker:** Automatically detects if **EasyEffects** (native or Flatpak), **`pactl`** (PipeWire/PulseAudio CLI), **PipeWire**, or required **LV2/RNNoise DSP plugins** are missing, shows distro-specific fix commands (`pacman`, `apt`, `dnf`, `zypper`, `flatpak`), and offers one-click package installation.
+- 💾 **Unsaved Changes Protection:** Tracks UI edits in real time and prompts to **Save**, **Discard**, or **Cancel** before minimizing to the tray, closing the window, or quitting.
 - 📦 **Native & Flatpak EasyEffects Support:** Automatically detects whether EasyEffects is installed natively (`easyeffects`) or via Flatpak (`com.github.wwmm.easyeffects`).
 
 ---
@@ -101,7 +105,11 @@ The repository includes curated presets ready to install into EasyEffects:
 
 | Preset | Channel | Purpose & Audio Characteristics |
 |---|---|---|
-| **`Meeting-Voice-Clear`** | Output | **Voice Meeting Optimization:** Aggressive low-frequency high-pass cut (-32 dB at 32Hz, -24 dB at 64Hz, -10 dB at 125Hz) to remove table thumps, HVAC drone, and proximity rumble. +4dB presence boost in the 1.5–4kHz speech clarity range, Speex denoiser (-70 dB) and dereverberation to kill room echo, plus fast dynamic compression to equalize loud and quiet speakers. |
+| **`Meeting-Voice-Clear`** | Output | **Voice Meeting Optimization (Balanced):** Steep sub-bass cut (-28 dB at 32Hz, -14 dB at 64Hz, 75Hz HPF) to eliminate desk/microphone thumps while preserving warm vocal depth (+2.0 dB at 125Hz, +1.5 dB at 250Hz) and natural upper-harmonic air. Includes **RNNoise neural voice filtering + VAD (65%)** and tuned Speex/compressor thresholds to suppress other participants' **"breathing into the microphone"** and wind-blast sounds without making voices sound like a landline telephone. |
+| **`Meeting-Voice-Clear-Max-Level`** | Output | **Aggressive Loud-vs-Soft Voice Leveler:** Copy of `Meeting-Voice-Clear` with heavy volume normalization (**Speex AGC + 6:1 Compressor @ -24 dB with +6 dB makeup + Maximizer @ +28 dB input gain / -0.5 dB ceiling**) so whisper-quiet speakers and booming loud speakers are pinned to the same volume—while **RNNoise (72% VAD)** at the front of the chain blocks mic breathing before it gets amplified. |
+| **`Meeting-Voice-Deep`** | Output | **Extra Vocal Depth & Broadcast Warmth:** Boosts low-chest vocal fundamentals (+4.0 dB at 125Hz, +3.0 dB at 250Hz, 65Hz HPF) for rich, radio-style voices while still cutting sub-60Hz desk and boom-arm thumps (-26 dB at 32Hz, -10 dB at 64Hz) and filtering mic breathing. |
+| **`Meeting-Breath-Block-Max`** | Output | **Maximum Breath & Wind-Blast Suppression:** Aggressive neural breath gating (**RNNoise 100% wet, 80% VAD threshold, 40ms release** + Speex -50 dB denoise & 96% VAD start + 80Hz HPF + -38 dB compressor gate floor + tamed 4–16kHz aspiration hiss) for calls where participants breathe heavily right into their microphone. |
+| **`Meeting-Voice-Deep-Breath-Max`** | Output | **Deep Broadcast Voice + Maximum Breath Blocking:** Combines the extra +4.0 dB / +3.0 dB (125Hz / 250Hz) vocal warmth of `Meeting-Voice-Deep` with the aggressive 80% neural VAD breath suppression of `Meeting-Breath-Block-Max`. |
 | **`Meeting-Mic-Clean`** | Input | **Microphone Cleanliness:** Speex noise suppression, room dereverberation, and Automatic Gain Control (AGC) for your outbound microphone. |
 | **`Crystal more Bass`** | Output | **Media, Movies & Music:** Rich, punchy low-end response with crystalline highs, tuned for music, movies, videos, and YouTube. |
 | **`Compressed-Max`** | Output | **Maximum Leveling:** High-ratio dynamic compression + maximizer ceiling. |
@@ -131,6 +139,12 @@ cargo build --release
 # Switch output preset immediately
 ./target/release/easyeffects-auto-preset --switch "Crystal more Bass"
 
+# Install all 8 bundled Meeting-Voice & Media presets into EasyEffects
+./target/release/easyeffects-auto-preset --install-presets
+
+# Verify EasyEffects and required audio packages are installed
+./target/release/easyeffects-auto-preset --check-deps
+
 # Check GitHub Releases for a newer version
 ./target/release/easyeffects-auto-preset --check-update
 
@@ -146,6 +160,12 @@ python3 python/easyeffects_auto_preset.py
 
 # Launch minimized directly to the system tray
 python3 python/easyeffects_auto_preset.py --minimized
+
+# Install all 8 bundled presets into EasyEffects from the CLI
+python3 python/easyeffects_auto_preset.py --install-presets
+
+# Check if EasyEffects and required packages are installed
+python3 python/easyeffects_auto_preset.py --check-deps
 
 # Check for updates from the CLI
 python3 python/easyeffects_auto_preset.py --check-update
