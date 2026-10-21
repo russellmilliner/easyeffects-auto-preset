@@ -1,16 +1,34 @@
 # EasyEffects Auto Preset
 
-[![Version](https://img.shields.io/badge/Version-v0.1.0-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/easyeffects-auto-preset/releases)
+[![Version](https://img.shields.io/badge/Version-v0.1.0-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/easyeffects-auto-preset/releases/tag/v0.1.0)
+[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.1.0-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.1.0/easyeffects-auto-preset-v0.1.0-x86_64.flatpak)
 [![Platform: Linux x86_64](https://img.shields.io/badge/Platform-Linux%20x86__64-fcc624?style=for-the-badge&logo=linux&logoColor=black)](https://www.kernel.org/)
 [![Desktop: KDE Plasma 6](https://img.shields.io/badge/Desktop-KDE%20Plasma%206%20%2F%20Qt%206-1d99f3?style=for-the-badge&logo=kde&logoColor=white)](https://kde.org/plasma-desktop/)
 [![Audio: PipeWire](https://img.shields.io/badge/Audio-PipeWire%20%2F%20PulseAudio-e05d44?style=for-the-badge&logo=soundcharts&logoColor=white)](https://pipewire.org/)
 [![Built with Rust](https://img.shields.io/badge/Rust-2021_Edition-dea584?style=for-the-badge&logo=rust&logoColor=black)](https://www.rust-lang.org/)
-[![Flatpak](https://img.shields.io/badge/Flatpak-Supported-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://flathub.org/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg?style=for-the-badge)](https://www.apache.org/licenses/LICENSE-2.0)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy%20Me%20a%20Coffee-ff5e5b?logo=ko-fi&logoColor=white&style=for-the-badge)](https://ko-fi.com/russellmilliner)
 
 > **Automated, intelligent audio preset switcher and system tray manager for EasyEffects on Linux (PipeWire / KDE Plasma).**  
 > Seamlessly detects active YouTube playback, voice meetings, and microphone streams to switch audio presets in real time.
+
+---
+
+## 📥 Release & Downloads (`v0.1.0`)
+
+| Asset | Download Link | Description |
+| :--- | :--- | :--- |
+| **Flatpak Bundle (`x86_64`)** | [**`easyeffects-auto-preset-v0.1.0-x86_64.flatpak`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.1.0/easyeffects-auto-preset-v0.1.0-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.1.0/easyeffects-auto-preset-v0.1.0-x86_64.flatpak.sha256)) | Self-contained Flatpak bundle (`org.kde.Platform//6.11`) with Rust daemon, PyQt6 GUI & bundled presets |
+| **Linux Release Archive (`x86_64`)** | [**`easyeffects-auto-preset-v0.1.0-linux-x86_64.tar.gz`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.1.0/easyeffects-auto-preset-v0.1.0-linux-x86_64.tar.gz) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.1.0/easyeffects-auto-preset-v0.1.0-linux-x86_64.tar.gz.sha256)) | Native Rust daemon binary, PyQt6 GUI & tray script, custom EasyEffects presets, systemd user service & desktop entry |
+| **Standalone Rust Daemon (`x86_64`)** | [**`easyeffects-auto-preset-v0.1.0-x86_64`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.1.0/easyeffects-auto-preset-v0.1.0-x86_64) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.1.0/easyeffects-auto-preset-v0.1.0-x86_64.sha256)) | Standalone compiled Rust CLI/daemon binary |
+
+### Quick Flatpak Install (from GitHub Release)
+
+```bash
+curl -LO https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.1.0/easyeffects-auto-preset-v0.1.0-x86_64.flatpak
+flatpak install --user -y easyeffects-auto-preset-v0.1.0-x86_64.flatpak
+flatpak run io.github.russellmilliner.easyeffects_auto_preset
+```
 
 ---
 
