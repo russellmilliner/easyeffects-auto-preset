@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    name: Build & Test (Rust & Python)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Check & Build
+        run: |
+          cargo check --verbose
+          cargo test --verbose
+          cargo build --release --verbose
+
+      - name: Python Syntax Check
+        run: |
+          python3 -m py_compile python/easyeffects_auto_preset.py

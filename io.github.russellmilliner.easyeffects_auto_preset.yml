@@ -1,0 +1,55 @@
+app-id: io.github.russellmilliner.easyeffects_auto_preset
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: easyeffects-auto-preset-gui
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=dri
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.Flatpak
+  - --filesystem=xdg-config/easyeffects-auto-preset:create
+  - --filesystem=~/.var/app/com.github.wwmm.easyeffects:ro
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/easyeffects-auto-preset/cargo
+
+modules:
+  - name: python3-pyqt6
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-index --find-links=file:///${PWD} PyQt6 || true
+
+  - name: easyeffects-auto-preset
+    buildsystem: simple
+    build-commands:
+      # Build native Rust binary
+      - cargo build --release --verbose
+      - install -Dm755 target/release/easyeffects-auto-preset -t /app/bin/
+      
+      # Install GUI launcher script
+      - install -Dm755 python/easyeffects_auto_preset.py /app/bin/easyeffects-auto-preset-gui
+      
+      # Install Desktop, Metainfo, and Icons
+      - install -Dm644 data/io.github.russellmilliner.easyeffects_auto_preset.desktop -t /app/share/applications/
+      - install -Dm644 data/io.github.russellmilliner.easyeffects_auto_preset.metainfo.xml -t /app/share/metainfo/
+      - install -Dm644 data/icons/io.github.russellmilliner.easyeffects_auto_preset.png /app/share/icons/hicolor/128x128/apps/io.github.russellmilliner.easyeffects_auto_preset.png
+      
+      # Install License
+      - install -Dm644 LICENSE NOTICE -t /app/share/licenses/io.github.russellmilliner.easyeffects_auto_preset/
+      
+      # Install Presets
+      - install -d /app/share/easyeffects-auto-preset/presets/
+      - install -m644 presets/*.json -t /app/share/easyeffects-auto-preset/presets/
+    sources:
+      - type: dir
+        path: .

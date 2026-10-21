@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.russellmilliner.easyeffects_auto_preset</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>EasyEffects Auto Preset</name>
+  <summary>Automated EasyEffects preset switcher for YouTube and Voice Meetings</summary>
+  <description>
+    <p>
+      EasyEffects Auto Preset is an intelligent, high-performance preset manager and switcher for EasyEffects on Linux.
+      Powered by PipeWire and PulseAudio audio stream monitoring, it seamlessly switches your output effects
+      depending on active audio activity:
+    </p>
+    <ul>
+      <li>Automatically engages bass-boosted and dynamic presets (e.g. Crystal more Bass) when YouTube or media is playing.</li>
+      <li>Automatically engages voice-optimized presets (e.g. Compressed-Max or Meeting-Voice-Clear) when any voice meeting or call is active (Google Meet, Zoom, Microsoft Teams, Slack, Discord, or active microphone input).</li>
+      <li>Restores default settings cleanly with configurable debounce delay when audio ends.</li>
+      <li>Offers both a native, ultra-lightweight Rust daemon and a feature-complete PyQt6 Settings &amp; Tray manager.</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.russellmilliner.easyeffects_auto_preset.desktop</launchable>
+  <url type="homepage">https://github.com/russellmilliner/easyeffects-auto-preset</url>
+  <url type="bugtracker">https://github.com/russellmilliner/easyeffects-auto-preset/issues</url>
+  <url type="donation">https://ko-fi.com/russellmilliner</url>
+  <developer_name>Russell Milliner</developer_name>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Utility</category>
+  </categories>
+  <provides>
+    <binary>easyeffects-auto-preset</binary>
+    <binary>easyeffects-auto-preset-gui</binary>
+  </provides>
+  <releases>
+    <release version="0.1.0" date="2026-10-20">
+      <description>
+        <p>Initial release featuring native Rust daemon, PyQt6 Tray manager, Flatpak packaging, and custom voice meeting presets.</p>
+      </description>
+    </release>
+  </releases>
+</component>

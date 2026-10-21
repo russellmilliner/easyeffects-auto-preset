@@ -1,0 +1,17 @@
+[Unit]
+Description=EasyEffects Auto Preset Switcher and Tray
+Documentation=https://github.com/russellmilliner/easyeffects-auto-preset
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+# Launch Python GUI tray app or native Rust daemon:
+# ExecStart=%h/.local/bin/easyeffects-auto-preset --minimized
+ExecStart=/usr/bin/env easyeffects-auto-preset-gui --minimized
+Restart=on-failure
+RestartSec=3
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin
+
+[Install]
+WantedBy=graphical-session.target

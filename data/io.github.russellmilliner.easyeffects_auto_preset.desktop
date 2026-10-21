@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=EasyEffects Auto Preset
+GenericName=Audio Preset Switcher
+Comment=Automatic EasyEffects preset switcher for YouTube and Voice Meetings
+Exec=easyeffects-auto-preset-gui
+Icon=io.github.russellmilliner.easyeffects_auto_preset
+Terminal=false
+Categories=Audio;AudioVideo;Utility;
+Keywords=easyeffects;audio;pipewire;preset;youtube;meeting;equalizer;
+StartupNotify=true
