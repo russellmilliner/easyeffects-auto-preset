@@ -55,7 +55,7 @@ APP_ICON_FILE = CONFIG_DIR / "app-icon.png"
 AUTOSTART_FILE = Path.home() / ".config" / "autostart" / "easyeffects-auto-preset.desktop"
 APP_DESKTOP_FILE = Path.home() / ".local" / "share" / "applications" / "easyeffects-auto-preset.desktop"
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 GITHUB_RELEASES_API_URL = "https://api.github.com/repos/russellmilliner/easyeffects-auto-preset/releases/latest"
 GITHUB_RELEASES_PAGE_URL = "https://github.com/russellmilliner/easyeffects-auto-preset/releases"
 
@@ -720,7 +720,7 @@ class MainWindow(QMainWindow):
         self._input_presets: list[str] = []
         self._first_minimize_tip_shown = False
 
-        self.setWindowTitle("EasyEffects Auto Preset Manager")
+        self.setWindowTitle(f"EasyEffects Auto Preset Manager v{APP_VERSION}")
         self.resize(800, 720)
         self.setWindowIcon(QIcon(str(APP_ICON_FILE)) if APP_ICON_FILE.is_file() else build_tray_icon())
 
@@ -755,7 +755,10 @@ class MainWindow(QMainWindow):
         banner_layout.addWidget(self.icon_label)
 
         banner_text_layout = QVBoxLayout()
-        self.status_title = QLabel("<b>EasyEffects Auto Preset</b>", self)
+        self.status_title = QLabel(
+            f"<b>EasyEffects Auto Preset</b> &nbsp;<span style='color: #38bdf8; font-size: 12px; font-weight: bold;'>v{APP_VERSION}</span>",
+            self,
+        )
         self.status_title.setStyleSheet("font-size: 15px;")
         self.status_detail = QLabel("Monitoring audio streams...", self)
         self.status_detail.setStyleSheet("color: palette(link); font-weight: bold;")
@@ -1181,11 +1184,11 @@ class TrayManager(QObject):
     def _init_tray(self):
         icon = build_tray_icon(mode="default", enabled=self.config.get("enabled", True))
         self.tray_icon = QSystemTrayIcon(icon, self.app)
-        self.tray_icon.setToolTip("EasyEffects Auto Preset: Initializing...")
+        self.tray_icon.setToolTip(f"EasyEffects Auto Preset v{APP_VERSION}: Initializing...")
 
         self.menu = QMenu()
 
-        self.header_action = QAction("EasyEffects Auto Preset", self.menu)
+        self.header_action = QAction(f"EasyEffects Auto Preset v{APP_VERSION}", self.menu)
         self.header_action.setEnabled(False)
         font = self.header_action.font()
         font.setBold(True)
@@ -1266,11 +1269,11 @@ class TrayManager(QObject):
     def _on_worker_state_changed(self, mode: str, active_preset: str, streams: list):
         mode_str = {
             "meeting": "Meeting",
-            "youtube": "YouTube",
+            "youtube": "YouTube / Media",
             "default": "Default",
         }.get(mode, mode.capitalize())
 
-        tooltip = f"EasyEffects Auto Preset: {mode_str}\nActive: {active_preset or 'None'}"
+        tooltip = f"EasyEffects Auto Preset v{APP_VERSION}: {mode_str}\nActive: {active_preset or 'None'}"
         self.tray_icon.setToolTip(tooltip)
         self.status_action.setText(f"Active: {active_preset} ({mode_str})")
         self.tray_icon.setIcon(build_tray_icon(mode, self.config.get("enabled", True)))
@@ -1313,7 +1316,8 @@ Keywords=easyeffects;audio;preset;youtube;meeting;
 
 
 def main():
-    parser = argparse.ArgumentParser(description="EasyEffects Auto Preset Manager & Tray App")
+    parser = argparse.ArgumentParser(description=f"EasyEffects Auto Preset Manager & Tray App v{APP_VERSION}")
+    parser.add_argument("-V", "--version", action="version", version=f"easyeffects-auto-preset v{APP_VERSION}")
     parser.add_argument("-m", "--minimized", action="store_true", help="Start minimized to the system tray")
     parser.add_argument("--tray", action="store_true", help="Alias for --minimized")
     parser.add_argument("--cli-status", action="store_true", help="Print current status and exit")
@@ -1336,7 +1340,7 @@ def main():
 
     if args.cli_status:
         cur = get_current_loaded_preset()
-        print(f"Current EasyEffects loaded preset: {cur}")
+        print(f"EasyEffects Auto Preset v{APP_VERSION} — Current loaded preset: {cur}")
         sys.exit(0)
 
     config = load_config()
@@ -1344,6 +1348,7 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("EasyEffects Auto Preset")
+    app.setApplicationVersion(APP_VERSION)
     app.setQuitOnLastWindowClosed(False)
 
     tray_mgr = TrayManager(app, config)

@@ -50,6 +50,11 @@
     <binary>easyeffects-auto-preset-gui</binary>
   </provides>
   <releases>
+    <release version="0.3.0" date="2026-10-21">
+      <description>
+        <p>Added visible version badges and version info across the main application header, window title, system tray context menu, tray hover tooltip, and CLI.</p>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-10-21">
       <description>
         <p>Added automatic detection for all music, movie, and video applications and streaming services, built-in GitHub Releases update checker (GUI, System Tray, and CLI), expanded documentation, and UI screenshots.</p>

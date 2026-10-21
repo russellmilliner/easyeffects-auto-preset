@@ -841,7 +841,7 @@ pub fn run_daemon(config: Config) {
 #[command(
     name = "easyeffects-auto-preset",
     author = "Russell Milliner <russell.milliner@gmail.com>",
-    version = "0.2.0",
+    version = "0.3.0",
     about = "Automated EasyEffects preset switcher for Voice Meetings, YouTube, Music, Movies, and Video on Linux (PipeWire / KDE Plasma)"
 )]
 struct Args {
@@ -901,9 +901,10 @@ fn main() {
     if args.status {
         let cur = get_current_loaded_preset();
         let eval = evaluate_audio_streams(&config);
-        println!("Current Loaded Preset: {}", cur);
-        println!("Meeting Active:        {} ({})", eval.meeting_active, eval.meeting_info);
-        println!("YouTube Playing:       {} ({})", eval.youtube_playing, eval.youtube_info);
+        println!("EasyEffects Auto Preset: v{}", APP_VERSION);
+        println!("Current Loaded Preset:   {}", cur);
+        println!("Meeting Active:          {} ({})", eval.meeting_active, eval.meeting_info);
+        println!("YouTube / Media Playing: {} ({})", eval.youtube_playing, eval.youtube_info);
         std::process::exit(0);
     }
 
