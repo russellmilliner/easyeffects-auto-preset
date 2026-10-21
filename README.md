@@ -176,6 +176,18 @@ chmod +x scripts/build-flatpak.sh
 
 ---
 
+## 🛠️ Interactive Release & GitHub Sync Scripts
+
+The `scripts/` directory includes interactive automation scripts (which also support non-interactive `--yes` CLI flags):
+
+| Script | Purpose & Usage |
+| :--- | :--- |
+| [**`./scripts/bump-version.sh`**](scripts/bump-version.sh) | Interactively increments Patch, Minor, Major, or Custom version across `Cargo.toml`, `src/main.rs`, `python/easyeffects_auto_preset.py`, `README.md`, AppStream `metainfo.xml`, and optionally regenerates UI screenshots.<br>`./scripts/bump-version.sh` *(interactive)* or `./scripts/bump-version.sh --minor -y` |
+| [**`./scripts/sync-github.sh`**](scripts/sync-github.sh) | Interactively stages files (`all`, `tracked`, or `patch`), prompts for a commit message, optionally creates an annotated git tag `vX.Y.Z`, and pushes to GitHub.<br>`./scripts/sync-github.sh` *(interactive)* or `./scripts/sync-github.sh -m "feat: update" -y` |
+| [**`./scripts/deploy-release.sh`**](scripts/deploy-release.sh) | End-to-end release pipeline: optional version bump → unit & syntax tests → Rust binary + Linux `.tar.gz` + Flatpak bundle + SHA-256 checksums → optional local systemd service update → git commit/tag/push → GitHub Release creation/upload via `gh`.<br>`./scripts/deploy-release.sh` *(interactive)* or `./scripts/deploy-release.sh --patch -y` |
+
+---
+
 ## ⚙️ Configuration (`~/.config/easyeffects-auto-preset/config.json`)
 
 ```json
