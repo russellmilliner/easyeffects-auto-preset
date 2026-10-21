@@ -20,6 +20,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 
 from PyQt6.QtCore import QObject, QRectF, Qt, QThread, QTimer, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QAction, QBrush, QColor, QDesktopServices, QFont, QIcon, QImage, QPainter, QPen, QPixmap
@@ -53,6 +55,10 @@ APP_ICON_FILE = CONFIG_DIR / "app-icon.png"
 AUTOSTART_FILE = Path.home() / ".config" / "autostart" / "easyeffects-auto-preset.desktop"
 APP_DESKTOP_FILE = Path.home() / ".local" / "share" / "applications" / "easyeffects-auto-preset.desktop"
 
+APP_VERSION = "0.1.0"
+GITHUB_RELEASES_API_URL = "https://api.github.com/repos/russellmilliner/easyeffects-auto-preset/releases/latest"
+GITHUB_RELEASES_PAGE_URL = "https://github.com/russellmilliner/easyeffects-auto-preset/releases"
+
 DEFAULT_CONFIG = {
     "enabled": True,
     "youtube_preset": "Crystal more Bass",
@@ -68,6 +74,7 @@ DEFAULT_CONFIG = {
     "detect_youtube": True,
     "show_notifications": True,
     "minimize_on_startup": True,
+    "check_updates_on_startup": True,
 }
 
 KNOWN_MEETING_BINARIES = {
@@ -165,6 +172,91 @@ def build_tray_icon(mode: str = "default", enabled: bool = True, size: int = 64)
 
     painter.end()
     return QIcon(QPixmap.fromImage(img))
+
+
+def parse_semver(version: str) -> tuple[int, int, int] | None:
+    """Parse a semantic version string (e.g., 'v0.1.0' or '0.1.0') into a (major, minor, patch) tuple."""
+    cleaned = version.strip().lstrip("vV").split("-", 1)[0].split("+", 1)[0]
+    parts = cleaned.split(".")
+    try:
+        major = int(parts[0])
+        minor = int(parts[1]) if len(parts) > 1 else 0
+        patch = int(parts[2]) if len(parts) > 2 else 0
+        return (major, minor, patch)
+    except (ValueError, IndexError):
+        return None
+
+
+def is_newer_version(current: str, latest: str) -> bool:
+    cur_t = parse_semver(current)
+    lat_t = parse_semver(latest)
+    if cur_t is not None and lat_t is not None:
+        return lat_t > cur_t
+    cur_c = current.strip().lstrip("vV")
+    lat_c = latest.strip().lstrip("vV")
+    return bool(lat_c) and lat_c != cur_c
+
+
+def check_for_updates(current_version: str = APP_VERSION, timeout: float = 8.0) -> dict:
+    """Check GitHub Releases for a newer version of EasyEffects Auto Preset."""
+    req = urllib.request.Request(
+        GITHUB_RELEASES_API_URL,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"EasyEffectsAutoPreset/{current_version}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        tag_name = str(payload.get("tag_name", "")).strip()
+        latest_clean = tag_name.lstrip("vV") or current_version.lstrip("vV")
+        current_clean = current_version.strip().lstrip("vV")
+        latest_tag = f"v{latest_clean}"
+        current_tag = f"v{current_clean}"
+        update_available = is_newer_version(current_clean, latest_clean)
+        release_url = str(payload.get("html_url", "")).strip() or GITHUB_RELEASES_PAGE_URL
+        release_notes = str(payload.get("body", "") or "")
+        message = (
+            f"Update available: {latest_tag} (current: {current_tag})"
+            if update_available
+            else f"Up to date ({current_tag})"
+        )
+        return {
+            "checked": True,
+            "ok": True,
+            "update_available": update_available,
+            "current_version": current_tag,
+            "latest_version": latest_tag,
+            "release_url": release_url,
+            "release_notes": release_notes,
+            "message": message,
+        }
+    except Exception as exc:
+        return {
+            "checked": True,
+            "ok": False,
+            "update_available": False,
+            "current_version": f"v{current_version.lstrip('vV')}",
+            "latest_version": f"v{current_version.lstrip('vV')}",
+            "release_url": GITHUB_RELEASES_PAGE_URL,
+            "release_notes": "",
+            "message": f"Update check failed: {exc}",
+        }
+
+
+class UpdateCheckWorker(QThread):
+    """Background worker thread for non-blocking GitHub Release update checks."""
+
+    result_ready = pyqtSignal(dict, bool)  # (result_dict, manual_trigger)
+
+    def __init__(self, manual: bool = False, parent: QObject | None = None):
+        super().__init__(parent)
+        self.manual = manual
+
+    def run(self):
+        result = check_for_updates(APP_VERSION)
+        self.result_ready.emit(result, self.manual)
 
 
 def load_config() -> dict:
@@ -567,6 +659,28 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(self.banner)
 
+        # Update available notification bar (hidden unless an update is found)
+        self.update_banner = QFrame(self)
+        self.update_banner.setFrameShape(QFrame.Shape.StyledPanel)
+        self.update_banner.setStyleSheet(
+            "QFrame { background-color: #0d47a1; color: white; border-radius: 6px; padding: 8px 12px; }"
+        )
+        update_banner_layout = QHBoxLayout(self.update_banner)
+        update_banner_layout.setContentsMargins(8, 4, 8, 4)
+        self.lbl_update_banner = QLabel("A new version of EasyEffects Auto Preset is available!", self.update_banner)
+        self.lbl_update_banner.setStyleSheet("color: white; font-weight: bold;")
+        self.btn_open_release = QPushButton("Download Update", self.update_banner)
+        self.btn_open_release.setStyleSheet(
+            "background-color: #ffffff; color: #0d47a1; font-weight: bold; border-radius: 4px; padding: 4px 12px;"
+        )
+        self._latest_release_url = GITHUB_RELEASES_PAGE_URL
+        self.btn_open_release.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self._latest_release_url)))
+        update_banner_layout.addWidget(self.lbl_update_banner)
+        update_banner_layout.addStretch()
+        update_banner_layout.addWidget(self.btn_open_release)
+        self.update_banner.setVisible(False)
+        main_layout.addWidget(self.update_banner)
+
         # Tab widget
         self.tabs = QTabWidget(self)
 
@@ -681,6 +795,23 @@ class MainWindow(QMainWindow):
         info_text.setWordWrap(True)
         layout_about.addWidget(info_text)
 
+        # Updates section in Preset Details / About tab
+        updates_frame = QFrame(tab_about)
+        updates_frame.setStyleSheet("QFrame { background-color: palette(alternate-base); border-radius: 8px; padding: 12px; }")
+        updates_layout = QHBoxLayout(updates_frame)
+        self.lbl_version_status = QLabel(f"<b>Version:</b> v{APP_VERSION} — Ready", updates_frame)
+        self.chk_updates_startup = QCheckBox("Check for updates on startup", updates_frame)
+        self.chk_updates_startup.setChecked(self.config.get("check_updates_on_startup", True))
+        self.chk_updates_startup.toggled.connect(self._on_updates_startup_toggled)
+        self.btn_check_updates = QPushButton("🔄 Check for Updates", updates_frame)
+        self.btn_check_updates.setStyleSheet("font-weight: bold; padding: 6px 14px;")
+        self.btn_check_updates.clicked.connect(lambda: self.trigger_update_check(manual=True))
+        updates_layout.addWidget(self.lbl_version_status)
+        updates_layout.addStretch()
+        updates_layout.addWidget(self.chk_updates_startup)
+        updates_layout.addWidget(self.btn_check_updates)
+        layout_about.addWidget(updates_frame)
+
         # Support on Ko-fi frame
         support_frame = QFrame(tab_about)
         support_frame.setStyleSheet("QFrame { background-color: palette(alternate-base); border-radius: 8px; padding: 12px; }")
@@ -764,6 +895,7 @@ class MainWindow(QMainWindow):
         self.chk_detect_comm.setChecked(self.config.get("detect_communication_role", True))
         self.chk_detect_yt.setChecked(self.config.get("detect_youtube", True))
         self.chk_notify.setChecked(self.config.get("show_notifications", True))
+        self.chk_updates_startup.setChecked(self.config.get("check_updates_on_startup", True))
         self.spin_debounce.setValue(float(self.config.get("debounce_seconds", 2.0)))
 
     def _save_settings(self):
@@ -777,6 +909,7 @@ class MainWindow(QMainWindow):
         self.config["detect_communication_role"] = self.chk_detect_comm.isChecked()
         self.config["detect_youtube"] = self.chk_detect_yt.isChecked()
         self.config["show_notifications"] = self.chk_notify.isChecked()
+        self.config["check_updates_on_startup"] = self.chk_updates_startup.isChecked()
         self.config["debounce_seconds"] = self.spin_debounce.value()
 
         save_config(self.config)
@@ -799,6 +932,54 @@ class MainWindow(QMainWindow):
 
     def _on_autostart_toggled(self, checked: bool):
         set_service_enabled(checked)
+
+    def _on_updates_startup_toggled(self, checked: bool):
+        self.config["check_updates_on_startup"] = checked
+        save_config(self.config)
+
+    def trigger_update_check(self, manual: bool = False):
+        self.btn_check_updates.setEnabled(False)
+        self.btn_check_updates.setText("Checking...")
+        self.lbl_version_status.setText(f"<b>Version:</b> v{APP_VERSION} — Checking for updates...")
+        self._update_worker = UpdateCheckWorker(manual=manual, parent=self)
+        self._update_worker.result_ready.connect(self._on_update_check_finished)
+        self._update_worker.start()
+
+    @pyqtSlot(dict, bool)
+    def _on_update_check_finished(self, result: dict, manual: bool):
+        self.btn_check_updates.setEnabled(True)
+        self.btn_check_updates.setText("🔄 Check for Updates")
+        msg = result.get("message", "")
+        self.lbl_version_status.setText(f"<b>Version:</b> v{APP_VERSION} — {msg}")
+        self._latest_release_url = result.get("release_url", GITHUB_RELEASES_PAGE_URL)
+
+        if result.get("update_available"):
+            latest = result.get("latest_version", "")
+            self.lbl_update_banner.setText(
+                f"🎉 Update available: EasyEffects Auto Preset {latest} (current: v{APP_VERSION})"
+            )
+            self.update_banner.setVisible(True)
+            if hasattr(self, "tray_icon") and self.tray_icon.isVisible():
+                self.tray_icon.showMessage(
+                    "EasyEffects Auto Preset Update Available",
+                    f"Version {latest} is available on GitHub Releases.",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    4000,
+                )
+            if manual:
+                ans = QMessageBox.question(
+                    self,
+                    "Update Available",
+                    f"{msg}\n\nWould you like to open the GitHub Releases page to download {latest}?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if ans == QMessageBox.StandardButton.Yes:
+                    QDesktopServices.openUrl(QUrl(self._latest_release_url))
+        elif manual:
+            if result.get("ok"):
+                QMessageBox.information(self, "Up to Date", f"EasyEffects Auto Preset is up to date (v{APP_VERSION}).")
+            else:
+                QMessageBox.warning(self, "Update Check Failed", msg)
 
     @pyqtSlot(str, str, list)
     def _on_state_changed(self, mode: str, active_preset: str, streams: list):
@@ -874,6 +1055,10 @@ class TrayManager(QObject):
         # Start background monitor thread
         self.thread.start()
 
+        # Automatically check for updates on startup if enabled
+        if self.config.get("check_updates_on_startup", True):
+            QTimer.singleShot(1500, lambda: self.window.trigger_update_check(manual=False))
+
     def _init_tray(self):
         icon = build_tray_icon(mode="default", enabled=self.config.get("enabled", True))
         self.tray_icon = QSystemTrayIcon(icon, self.app)
@@ -908,6 +1093,10 @@ class TrayManager(QObject):
         self.settings_action = QAction("Open Settings...", self.menu)
         self.settings_action.triggered.connect(self.show_window)
         self.menu.addAction(self.settings_action)
+
+        self.check_update_action = QAction("Check for Updates...", self.menu)
+        self.check_update_action.triggered.connect(lambda: self.window.trigger_update_check(manual=True))
+        self.menu.addAction(self.check_update_action)
 
         self.menu.addSeparator()
         self.kofi_action = QAction("☕ Buy Me a Coffee (Ko-fi)", self.menu)
@@ -1010,7 +1199,16 @@ def main():
     parser.add_argument("--tray", action="store_true", help="Alias for --minimized")
     parser.add_argument("--cli-status", action="store_true", help="Print current status and exit")
     parser.add_argument("--switch", type=str, help="Immediately apply an output preset and exit")
+    parser.add_argument("-u", "--check-update", action="store_true", help="Check GitHub Releases for updates and exit")
     args = parser.parse_args()
+
+    if args.check_update:
+        print(f"Checking for updates (current version: v{APP_VERSION})...")
+        res = check_for_updates(APP_VERSION)
+        print(res["message"])
+        if res.get("update_available"):
+            print(f"Release URL: {res['release_url']}")
+        sys.exit(0 if res.get("ok") else 1)
 
     if args.switch:
         ok = apply_preset(args.switch)

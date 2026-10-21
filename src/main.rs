@@ -25,8 +25,15 @@ const DEFAULT_CONFIG_JSON: &str = r#"{
   "detect_microphone": true,
   "detect_communication_role": true,
   "detect_meeting_apps": true,
-  "detect_youtube": true
+  "detect_youtube": true,
+  "check_updates_on_startup": true
 }"#;
+
+pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const GITHUB_RELEASES_API_URL: &str =
+    "https://api.github.com/repos/russellmilliner/easyeffects-auto-preset/releases/latest";
+pub const GITHUB_RELEASES_PAGE_URL: &str =
+    "https://github.com/russellmilliner/easyeffects-auto-preset/releases";
 
 const KNOWN_MEETING_BINARIES: &[&str] = &[
     "zoom",
@@ -80,6 +87,8 @@ pub struct Config {
     pub detect_meeting_apps: bool,
     #[serde(default = "default_true")]
     pub detect_youtube: bool,
+    #[serde(default = "default_true")]
+    pub check_updates_on_startup: bool,
 }
 
 fn default_true() -> bool {
@@ -362,12 +371,135 @@ pub fn evaluate_audio_streams(config: &Config) -> AudioEvaluation {
     eval
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UpdateCheckResult {
+    pub checked: bool,
+    pub update_available: bool,
+    pub current_version: String,
+    pub latest_version: String,
+    pub release_url: String,
+    pub release_notes: String,
+    pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubReleaseResponse {
+    tag_name: String,
+    #[serde(default)]
+    html_url: String,
+    #[serde(default)]
+    body: Option<String>,
+}
+
+pub fn parse_semver(version: &str) -> Option<(u32, u32, u32)> {
+    let trimmed = version.trim().trim_start_matches('v').trim_start_matches('V');
+    let core = trimmed.split(['-', '+']).next().unwrap_or(trimmed);
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse::<u32>().ok()?;
+    let minor = parts.next().unwrap_or("0").parse::<u32>().ok()?;
+    let patch = parts.next().unwrap_or("0").parse::<u32>().ok()?;
+    Some((major, minor, patch))
+}
+
+pub fn is_newer_version(current: &str, latest: &str) -> bool {
+    match (parse_semver(current), parse_semver(latest)) {
+        (Some(cur), Some(lat)) => lat > cur,
+        _ => {
+            let cur_clean = current.trim().trim_start_matches(['v', 'V']);
+            let lat_clean = latest.trim().trim_start_matches(['v', 'V']);
+            !lat_clean.is_empty() && lat_clean != cur_clean
+        }
+    }
+}
+
+pub fn parse_github_release_json(body: &str, current_version: &str) -> Result<UpdateCheckResult, String> {
+    let parsed: GithubReleaseResponse =
+        serde_json::from_str(body).map_err(|e| format!("Invalid GitHub release JSON: {e}"))?;
+
+    let latest_clean = parsed
+        .tag_name
+        .trim()
+        .trim_start_matches(['v', 'V'])
+        .to_string();
+    let current_clean = current_version
+        .trim()
+        .trim_start_matches(['v', 'V'])
+        .to_string();
+    let latest_tag = if latest_clean.is_empty() {
+        format!("v{current_clean}")
+    } else {
+        format!("v{latest_clean}")
+    };
+    let current_tag = format!("v{current_clean}");
+    let update_available = is_newer_version(&current_clean, &latest_clean);
+    let release_url = if parsed.html_url.trim().is_empty() {
+        GITHUB_RELEASES_PAGE_URL.to_string()
+    } else {
+        parsed.html_url
+    };
+    let release_notes = parsed.body.unwrap_or_default();
+    let message = if update_available {
+        format!("Update available: {latest_tag} (current: {current_tag})")
+    } else {
+        format!("Up to date ({current_tag})")
+    };
+
+    Ok(UpdateCheckResult {
+        checked: true,
+        update_available,
+        current_version: current_tag,
+        latest_version: latest_tag,
+        release_url,
+        release_notes,
+        message,
+    })
+}
+
+pub fn check_for_updates(current_version: &str) -> Result<UpdateCheckResult, String> {
+    let output = Command::new("curl")
+        .args([
+            "-fsSL",
+            "--max-time",
+            "8",
+            "-H",
+            "Accept: application/vnd.github+json",
+            "-H",
+            &format!("User-Agent: EasyEffectsAutoPreset/{current_version}"),
+            GITHUB_RELEASES_API_URL,
+        ])
+        .output()
+        .map_err(|e| format!("Failed to invoke curl for update check: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("GitHub API request failed: {}", stderr.trim()));
+    }
+
+    let body = String::from_utf8_lossy(&output.stdout);
+    parse_github_release_json(&body, current_version)
+}
+
 pub fn run_daemon(config: Config) {
-    println!("EasyEffects Auto Preset Rust Daemon starting...");
+    println!("EasyEffects Auto Preset Rust Daemon v{} starting...", APP_VERSION);
     println!("  YouTube Preset: {}", config.youtube_preset);
     println!("  Meeting Preset: {}", config.meeting_preset);
     println!("  Default Preset: {}", config.default_preset);
     println!("  Debounce:       {}s", config.debounce_seconds);
+
+    if config.check_updates_on_startup {
+        std::thread::spawn(|| {
+            if let Ok(res) = check_for_updates(APP_VERSION) {
+                if res.update_available {
+                    println!(
+                        "[*] Update available: {} -> {} ({})",
+                        res.current_version, res.latest_version, res.release_url
+                    );
+                } else {
+                    println!("[*] Update check: {}", res.message);
+                }
+            }
+        });
+    }
 
     let mut current_mode = "unknown".to_string();
     let mut last_preset = get_current_loaded_preset();
@@ -464,11 +596,32 @@ struct Args {
     /// List all available EasyEffects output and input presets
     #[arg(short, long)]
     list_presets: bool,
+
+    /// Check GitHub Releases for a newer version and exit
+    #[arg(short = 'u', long)]
+    check_update: bool,
 }
 
 fn main() {
     let args = Args::parse();
     let config = load_config();
+
+    if args.check_update {
+        println!("Checking for updates (current version: v{})...", APP_VERSION);
+        match check_for_updates(APP_VERSION) {
+            Ok(res) => {
+                println!("{}", res.message);
+                if res.update_available {
+                    println!("Release URL: {}", res.release_url);
+                }
+                std::process::exit(0);
+            }
+            Err(err) => {
+                eprintln!("Update check failed: {}", err);
+                std::process::exit(1);
+            }
+        }
+    }
 
     if let Some(ref preset) = args.switch {
         let ok = apply_preset(preset, None);
@@ -506,8 +659,39 @@ fn main() {
     if args.daemon {
         run_daemon(config);
     } else {
-        println!("EasyEffects Auto Preset Rust CLI");
-        println!("Run with --daemon to start the background engine, or --status to view audio state.");
+        println!("EasyEffects Auto Preset Rust CLI v{}", APP_VERSION);
+        println!("Run with --daemon to start the background engine, --status to view audio state, or --check-update to check for new releases.");
         println!("Use --help for full options.");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_semver_comparison() {
+        assert_eq!(parse_semver("v0.1.0"), Some((0, 1, 0)));
+        assert_eq!(parse_semver("0.1.0"), Some((0, 1, 0)));
+        assert!(is_newer_version("0.1.0", "v0.2.0"));
+        assert!(is_newer_version("v0.1.0", "v0.1.1"));
+        assert!(!is_newer_version("v0.1.0", "v0.1.0"));
+        assert!(!is_newer_version("v0.2.0", "v0.1.9"));
+    }
+
+    #[test]
+    fn test_parse_github_release_json() {
+        let raw = r#"{
+            "tag_name": "v0.2.0",
+            "html_url": "https://github.com/russellmilliner/easyeffects-auto-preset/releases/tag/v0.2.0",
+            "body": "Release notes"
+        }"#;
+        let res = parse_github_release_json(raw, "0.1.0").expect("valid json");
+        assert!(res.update_available);
+        assert_eq!(res.current_version, "v0.1.0");
+        assert_eq!(res.latest_version, "v0.2.0");
+
+        let current = parse_github_release_json(raw, "0.2.0").expect("valid json");
+        assert!(!current.update_available);
     }
 }

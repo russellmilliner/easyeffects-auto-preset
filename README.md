@@ -55,6 +55,7 @@ If you find EasyEffects Auto Preset helpful for your audio workflow and meetings
   - 🟢 **Green pip:** Voice meeting / call active
   - ⚪ **Slate pip:** System idle / default preset
   - 🔴 **Red pip:** Auto-switching paused
+- 🔄 **Built-in Update Checker:** Automatic startup update checks and manual one-click update checks via the GUI, system tray menu (`Check for Updates...`), and CLI (`--check-update` / `-u`) against GitHub Releases.
 - 📦 **Flatpak Ready:** Complete Flatpak manifest (`io.github.russellmilliner.easyeffects_auto_preset.yml`) and Flathub AppStream metadata.
 - 🎚️ **Bundled Custom EasyEffects Presets:** Includes custom meeting presets tuned specifically for speech clarity and background noise filtration.
 
@@ -113,6 +114,9 @@ cargo build --release
 
 # List available presets
 ./target/release/easyeffects-auto-preset --list-presets
+
+# Check for new releases on GitHub
+./target/release/easyeffects-auto-preset --check-update
 
 # Run background daemon
 ./target/release/easyeffects-auto-preset --daemon
@@ -174,7 +178,8 @@ Settings are saved in `~/.config/easyeffects-auto-preset/config.json`:
   "detect_meeting_apps": true,
   "detect_youtube": true,
   "show_notifications": true,
-  "minimize_on_startup": true
+  "minimize_on_startup": true,
+  "check_updates_on_startup": true
 }
 ```
 
