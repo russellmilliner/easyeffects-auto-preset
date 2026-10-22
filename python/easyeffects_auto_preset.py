@@ -2313,7 +2313,7 @@ class MainWindow(QMainWindow):
         self.btn_install_presets_tab3.setStyleSheet("font-weight: bold; padding: 6px 14px;")
         self.btn_install_presets_tab3.clicked.connect(lambda: self.open_bundled_presets_dialog(first_launch=False))
 
-        self.btn_check_deps = QPushButton("🩺 System & Dependency Check...", tools_frame)
+        self.btn_check_deps = QPushButton("🩺 System && Dependency Check...", tools_frame)
         self.btn_check_deps.setStyleSheet("font-weight: bold; padding: 6px 14px;")
         self.btn_check_deps.clicked.connect(self.open_dependency_dialog)
 

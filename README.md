@@ -86,11 +86,11 @@ If you find EasyEffects Auto Preset helpful for your audio workflow and meetings
 - 🦀 **Dual Architecture (Rust + Python/Qt6):**
   - **Native Rust CLI & Daemon (`easyeffects-auto-preset`):** Memory-safe, zero-overhead background engine consuming **<4MB RSS** and ~0% CPU.
   - **PyQt6 Settings & System Tray Manager (`python/easyeffects_auto_preset.py`):** Full graphical settings dialog, live PipeWire stream inspector table, one-click preset testing, and tray quick-override menu.
-- 🎨 **Dynamic System Tray Status Icon:**
-  - 🔵 **Blue pip:** YouTube, music, movie, or video playback active
-  - 🟢 **Green pip:** Voice meeting / call active
-  - ⚪ **Slate pip:** System idle / default preset
-  - 🔴 **Red pip:** Auto-switching paused
+- 🎨 **Dynamic System Tray Status Badges:**
+  - 🔵 **`MED` (Blue Badge):** YouTube, music, movie, or video playback active
+  - 🟢 **`MTG` (Green Badge):** Voice meeting / call active
+  - ⚪ **`DEF` (Slate Badge):** System idle / default preset
+  - 🔴 **`OFF` (Red Badge):** Auto-switching paused
 - 🔔 **Built-in Update Checker:** Automatic startup update checks and manual one-click update checks via the GUI, system tray menu (`Check for Updates...`), and CLI (`--check-update` / `-u`) against GitHub Releases.
 - 📦 **Packaged Meeting-Voice & Media Presets:** Bundles all 8 custom EasyEffects presets directly inside the application. Offers to install them on first launch, and allows installing or restoring them anytime later from the GUI (**`📦 Install / Restore Bundled Presets...`**), the System Tray menu, or the CLI (`--install-presets`).
 - 🩺 **System & Dependency Checker:** Automatically detects if **EasyEffects** (native or Flatpak), **`pactl`** (PipeWire/PulseAudio CLI), **PipeWire**, or required **LV2/RNNoise DSP plugins** are missing, shows distro-specific fix commands (`pacman`, `apt`, `dnf`, `zypper`, `flatpak`), and offers one-click package installation.
