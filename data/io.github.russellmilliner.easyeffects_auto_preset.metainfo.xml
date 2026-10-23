@@ -50,6 +50,11 @@
     <binary>easyeffects-auto-preset-gui</binary>
   </provides>
   <releases>
+    <release version="0.5.1" date="2026-10-22">
+      <description>
+        <p>Add periodic 6-hour update checks, check on window restore, and one-click in-app update installer (--self-update)</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-10-21">
       <description>
         <p>The system tray icon (and the main window's live status header icon) now renders both a mode-specific symbol in the upper half and a high-contrast 3-letter mode badge in the lower half across all standard tray sizes (22px,</p>

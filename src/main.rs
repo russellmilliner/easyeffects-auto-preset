@@ -645,8 +645,19 @@ pub struct UpdateCheckResult {
     pub current_version: String,
     pub latest_version: String,
     pub release_url: String,
+    pub download_url: String,
+    pub flatpak_download_url: String,
+    pub tarball_download_url: String,
     pub release_notes: String,
     pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubAsset {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    browser_download_url: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -656,6 +667,8 @@ struct GithubReleaseResponse {
     html_url: String,
     #[serde(default)]
     body: Option<String>,
+    #[serde(default)]
+    assets: Vec<GithubAsset>,
 }
 
 pub fn parse_semver(version: &str) -> Option<(u32, u32, u32)> {
@@ -704,6 +717,33 @@ pub fn parse_github_release_json(body: &str, current_version: &str) -> Result<Up
     } else {
         parsed.html_url
     };
+
+    let mut flatpak_download_url = String::new();
+    let mut tarball_download_url = String::new();
+    let mut binary_download_url = String::new();
+    for asset in &parsed.assets {
+        let name = asset.name.to_lowercase();
+        if name.ends_with(".sha256") {
+            continue;
+        }
+        if name.ends_with(".flatpak") {
+            flatpak_download_url = asset.browser_download_url.clone();
+        } else if name.ends_with(".tar.gz") {
+            tarball_download_url = asset.browser_download_url.clone();
+        } else if name.starts_with("easyeffects-auto-preset-") {
+            binary_download_url = asset.browser_download_url.clone();
+        }
+    }
+    let download_url = if !tarball_download_url.is_empty() {
+        tarball_download_url.clone()
+    } else if !flatpak_download_url.is_empty() {
+        flatpak_download_url.clone()
+    } else if !binary_download_url.is_empty() {
+        binary_download_url
+    } else {
+        release_url.clone()
+    };
+
     let release_notes = parsed.body.unwrap_or_default();
     let message = if update_available {
         format!("Update available: {latest_tag} (current: {current_tag})")
@@ -717,6 +757,9 @@ pub fn parse_github_release_json(body: &str, current_version: &str) -> Result<Up
         current_version: current_tag,
         latest_version: latest_tag,
         release_url,
+        download_url,
+        flatpak_download_url,
+        tarball_download_url,
         release_notes,
         message,
     })
@@ -744,6 +787,149 @@ pub fn check_for_updates(current_version: &str) -> Result<UpdateCheckResult, Str
 
     let body = String::from_utf8_lossy(&output.stdout);
     parse_github_release_json(&body, current_version)
+}
+
+pub fn install_update_from_github(current_version: &str) -> Result<String, String> {
+    let info = check_for_updates(current_version)?;
+    if !info.update_available {
+        return Ok(format!("Already up to date ({})", info.current_version));
+    }
+
+    let in_flatpak = Path::new("/.flatpak-info").exists() || std::env::var("FLATPAK_ID").is_ok();
+    if in_flatpak && !info.flatpak_download_url.is_empty() {
+        let tmp_bundle = std::env::temp_dir().join(format!(
+            "easyeffects-auto-preset-{}.flatpak",
+            info.latest_version
+        ));
+        let status = Command::new("curl")
+            .args([
+                "-fsSL",
+                "--max-time",
+                "120",
+                "-o",
+                &tmp_bundle.to_string_lossy(),
+                &info.flatpak_download_url,
+            ])
+            .status()
+            .map_err(|e| format!("Failed to download Flatpak bundle: {e}"))?;
+        if !status.success() {
+            return Err("Failed to download Flatpak bundle from GitHub Releases".to_string());
+        }
+        let install_status = Command::new("flatpak-spawn")
+            .args([
+                "--host",
+                "flatpak",
+                "install",
+                "--user",
+                "-y",
+                "--reinstall",
+                &tmp_bundle.to_string_lossy(),
+            ])
+            .status()
+            .map_err(|e| format!("Failed to invoke flatpak-spawn: {e}"))?;
+        if !install_status.success() {
+            return Err("flatpak install returned non-zero status".to_string());
+        }
+        return Ok(format!(
+            "Installed EasyEffects Auto Preset {} Flatpak successfully.",
+            info.latest_version
+        ));
+    }
+
+    if info.tarball_download_url.is_empty() {
+        return Err("No Linux release archive (.tar.gz) found in latest GitHub Release".to_string());
+    }
+
+    let tmp_dir = std::env::temp_dir().join(format!(
+        "easyeffects-auto-preset-update-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&tmp_dir);
+    fs::create_dir_all(&tmp_dir).map_err(|e| format!("Failed to create temp dir: {e}"))?;
+    let archive_path = tmp_dir.join("release.tar.gz");
+
+    let dl = Command::new("curl")
+        .args([
+            "-fsSL",
+            "--max-time",
+            "120",
+            "-o",
+            &archive_path.to_string_lossy(),
+            &info.tarball_download_url,
+        ])
+        .status()
+        .map_err(|e| format!("Failed to download release archive: {e}"))?;
+    if !dl.success() {
+        let _ = fs::remove_dir_all(&tmp_dir);
+        return Err("Failed to download release archive from GitHub Releases".to_string());
+    }
+
+    let untar = Command::new("tar")
+        .args([
+            "-xzf",
+            &archive_path.to_string_lossy(),
+            "-C",
+            &tmp_dir.to_string_lossy(),
+        ])
+        .status()
+        .map_err(|e| format!("Failed to extract release archive: {e}"))?;
+    if !untar.success() {
+        let _ = fs::remove_dir_all(&tmp_dir);
+        return Err("Failed to extract release archive".to_string());
+    }
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let local_bin = Path::new(&home).join(".local/bin");
+    let _ = fs::create_dir_all(&local_bin);
+
+    // Find extracted staging directory
+    let mut updated_script = false;
+    if let Ok(entries) = fs::read_dir(&tmp_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                let py_script = p.join("python/easyeffects_auto_preset.py");
+                if py_script.is_file() {
+                    let dest = local_bin.join("easyeffects-auto-preset");
+                    let _ = Command::new("install")
+                        .args([
+                            "-m",
+                            "755",
+                            &py_script.to_string_lossy(),
+                            &dest.to_string_lossy(),
+                        ])
+                        .status();
+                    updated_script = true;
+                }
+                let rust_bin = p.join("easyeffects-auto-preset");
+                if rust_bin.is_file() {
+                    let dest_daemon = local_bin.join("easyeffects-auto-preset-daemon");
+                    let _ = Command::new("install")
+                        .args([
+                            "-m",
+                            "755",
+                            &rust_bin.to_string_lossy(),
+                            &dest_daemon.to_string_lossy(),
+                        ])
+                        .status();
+                }
+            }
+        }
+    }
+
+    let _ = fs::remove_dir_all(&tmp_dir);
+    if !updated_script {
+        return Err("Extracted archive did not contain python/easyeffects_auto_preset.py".to_string());
+    }
+
+    let _ = Command::new("systemctl")
+        .args(["--user", "restart", "easyeffects-auto-preset.service"])
+        .status();
+
+    Ok(format!(
+        "Successfully updated EasyEffects Auto Preset to {} and restarted service.",
+        info.latest_version
+    ))
 }
 
 pub fn pause_active_media_players() -> Vec<String> {
@@ -897,6 +1083,7 @@ pub fn is_our_app_cmdline(args: &[String]) -> bool {
                 | "--check-deps"
                 | "--check-update"
                 | "-u"
+                | "--self-update"
                 | "--version"
                 | "-V"
                 | "--help"
@@ -1013,11 +1200,27 @@ fn run_daemon(config: Config) {
     let mut last_preset = get_current_loaded_preset();
     let mut meeting_lost_at: Option<Instant> = None;
     let mut youtube_lost_at: Option<Instant> = None;
+    let mut last_update_check = Instant::now();
+    let update_check_interval = Duration::from_secs(6 * 60 * 60);
 
     let debounce = Duration::from_secs_f64(config.debounce_seconds);
     let interval = Duration::from_secs_f64(config.check_interval_seconds.max(0.5));
 
     loop {
+        if config.check_updates_on_startup && last_update_check.elapsed() >= update_check_interval {
+            last_update_check = Instant::now();
+            std::thread::spawn(|| {
+                if let Ok(res) = check_for_updates(APP_VERSION) {
+                    if res.update_available {
+                        println!(
+                            "[*] Update available: {} -> {} ({})",
+                            res.current_version, res.latest_version, res.release_url
+                        );
+                    }
+                }
+            });
+        }
+
         let eval = evaluate_audio_streams(&config);
         let now = Instant::now();
 
@@ -1094,7 +1297,7 @@ fn run_daemon(config: Config) {
 #[command(
     name = "easyeffects-auto-preset",
     author = "Russell Milliner <russell.milliner@gmail.com>",
-    version = "0.5.0",
+    version = "0.5.1",
     about = "Automated EasyEffects preset switcher for Voice Meetings, YouTube, Music, Movies, and Video on Linux (PipeWire / KDE Plasma)"
 )]
 struct Args {
@@ -1125,6 +1328,10 @@ struct Args {
     /// Check GitHub Releases for a newer version and exit
     #[arg(short = 'u', long)]
     check_update: bool,
+
+    /// Download and install the latest release from GitHub Releases and restart the service
+    #[arg(long)]
+    self_update: bool,
 }
 
 const BUNDLED_OUTPUT_PRESETS: &[(&str, &str)] = &[
@@ -1257,12 +1464,30 @@ fn main() {
             Ok(res) => {
                 println!("{}", res.message);
                 if res.update_available {
-                    println!("Release URL: {}", res.release_url);
+                    println!("Release URL:  {}", res.release_url);
+                    println!("Download URL: {}", res.download_url);
                 }
                 std::process::exit(0);
             }
             Err(err) => {
                 eprintln!("Update check failed: {}", err);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if args.self_update {
+        println!(
+            "Checking and installing latest update (current version: v{})...",
+            APP_VERSION
+        );
+        match install_update_from_github(APP_VERSION) {
+            Ok(msg) => {
+                println!("{}", msg);
+                std::process::exit(0);
+            }
+            Err(err) => {
+                eprintln!("Self-update failed: {}", err);
                 std::process::exit(1);
             }
         }

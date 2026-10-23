@@ -75,7 +75,7 @@ AUTOSTART_FILE = Path.home() / ".config" / "autostart" / "easyeffects-auto-prese
 APP_DESKTOP_FILE = Path.home() / ".local" / "share" / "applications" / "easyeffects-auto-preset.desktop"
 USER_SHARED_PRESETS_DIR = Path.home() / ".local" / "share" / "easyeffects-auto-preset" / "presets"
 
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.5.1"
 GITHUB_RELEASES_API_URL = "https://api.github.com/repos/russellmilliner/easyeffects-auto-preset/releases/latest"
 GITHUB_RELEASES_PAGE_URL = "https://github.com/russellmilliner/easyeffects-auto-preset/releases"
 
@@ -1198,6 +1198,24 @@ def check_for_updates(current_version: str = APP_VERSION, timeout: float = 8.0) 
         update_available = is_newer_version(current_clean, latest_clean)
         release_url = str(payload.get("html_url", "")).strip() or GITHUB_RELEASES_PAGE_URL
         release_notes = str(payload.get("body", "") or "")
+
+        flatpak_url = ""
+        tarball_url = ""
+        binary_url = ""
+        for asset in payload.get("assets", []) or []:
+            name = str(asset.get("name", "")).lower()
+            dl_url = str(asset.get("browser_download_url", "")).strip()
+            if not dl_url or name.endswith(".sha256"):
+                continue
+            if name.endswith(".flatpak"):
+                flatpak_url = dl_url
+            elif name.endswith(".tar.gz"):
+                tarball_url = dl_url
+            elif name.startswith("easyeffects-auto-preset-"):
+                binary_url = dl_url
+
+        download_url = tarball_url or flatpak_url or binary_url or release_url
+
         message = (
             f"Update available: {latest_tag} (current: {current_tag})"
             if update_available
@@ -1210,6 +1228,9 @@ def check_for_updates(current_version: str = APP_VERSION, timeout: float = 8.0) 
             "current_version": current_tag,
             "latest_version": latest_tag,
             "release_url": release_url,
+            "download_url": download_url,
+            "flatpak_download_url": flatpak_url,
+            "tarball_download_url": tarball_url,
             "release_notes": release_notes,
             "message": message,
         }
@@ -1221,9 +1242,110 @@ def check_for_updates(current_version: str = APP_VERSION, timeout: float = 8.0) 
             "current_version": f"v{current_version.lstrip('vV')}",
             "latest_version": f"v{current_version.lstrip('vV')}",
             "release_url": GITHUB_RELEASES_PAGE_URL,
+            "download_url": GITHUB_RELEASES_PAGE_URL,
+            "flatpak_download_url": "",
+            "tarball_download_url": "",
             "release_notes": "",
             "message": f"Update check failed: {exc}",
         }
+
+
+def install_update_from_github(
+    tarball_url: str = "",
+    flatpak_url: str = "",
+    latest_version: str = "",
+    timeout: float = 120.0,
+) -> dict:
+    """Download and install the latest release of EasyEffects Auto Preset from GitHub Releases."""
+    import tempfile
+
+    try:
+        if not tarball_url and not flatpak_url:
+            info = check_for_updates(APP_VERSION)
+            if not info.get("ok"):
+                return {"ok": False, "message": info.get("message", "Update check failed")}
+            if not info.get("update_available"):
+                return {"ok": True, "updated": False, "message": f"Already up to date ({info.get('current_version')})"}
+            tarball_url = info.get("tarball_download_url", "")
+            flatpak_url = info.get("flatpak_download_url", "")
+            latest_version = info.get("latest_version", "")
+
+        in_flatpak = Path("/.flatpak-info").exists() or bool(os.environ.get("FLATPAK_ID"))
+        if in_flatpak and flatpak_url:
+            with tempfile.TemporaryDirectory(prefix="ee-auto-preset-fp-") as tmpd:
+                bundle_path = Path(tmpd) / f"easyeffects-auto-preset-{latest_version or 'latest'}.flatpak"
+                req = urllib.request.Request(
+                    flatpak_url,
+                    headers={"User-Agent": f"EasyEffectsAutoPreset/{APP_VERSION}"},
+                )
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    bundle_path.write_bytes(resp.read())
+                res = subprocess.run(
+                    ["flatpak-spawn", "--host", "flatpak", "install", "--user", "-y", "--reinstall", str(bundle_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+                if res.returncode != 0:
+                    return {"ok": False, "message": f"Flatpak install failed: {res.stderr.strip()}"}
+                return {
+                    "ok": True,
+                    "updated": True,
+                    "latest_version": latest_version,
+                    "message": f"Installed EasyEffects Auto Preset {latest_version} Flatpak successfully.",
+                }
+
+        if not tarball_url:
+            return {"ok": False, "message": "No Linux release archive (.tar.gz) found on GitHub Releases."}
+
+        with tempfile.TemporaryDirectory(prefix="ee-auto-preset-upd-") as tmpd:
+            tmp_path = Path(tmpd)
+            archive_path = tmp_path / "release.tar.gz"
+            req = urllib.request.Request(
+                tarball_url,
+                headers={"User-Agent": f"EasyEffectsAutoPreset/{APP_VERSION}"},
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                archive_path.write_bytes(resp.read())
+
+            untar = subprocess.run(
+                ["tar", "-xzf", str(archive_path), "-C", str(tmp_path)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if untar.returncode != 0:
+                return {"ok": False, "message": f"Failed to extract update archive: {untar.stderr.strip()}"}
+
+            local_bin = Path.home() / ".local" / "bin"
+            local_bin.mkdir(parents=True, exist_ok=True)
+            updated_script = False
+
+            for child in tmp_path.iterdir():
+                if child.is_dir():
+                    py_src = child / "python" / "easyeffects_auto_preset.py"
+                    if py_src.is_file():
+                        dest_py = local_bin / "easyeffects-auto-preset"
+                        shutil.copy2(py_src, dest_py)
+                        dest_py.chmod(0o755)
+                        updated_script = True
+                    rust_src = child / "easyeffects-auto-preset"
+                    if rust_src.is_file():
+                        dest_rust = local_bin / "easyeffects-auto-preset-daemon"
+                        shutil.copy2(rust_src, dest_rust)
+                        dest_rust.chmod(0o755)
+
+            if not updated_script:
+                return {"ok": False, "message": "Extracted archive did not contain python/easyeffects_auto_preset.py"}
+
+        return {
+            "ok": True,
+            "updated": True,
+            "latest_version": latest_version,
+            "message": f"Updated ~/.local/bin/easyeffects-auto-preset to {latest_version}.",
+        }
+    except Exception as exc:
+        return {"ok": False, "message": f"Update installation failed: {exc}"}
 
 
 class UpdateCheckWorker(QThread):
@@ -1238,6 +1360,32 @@ class UpdateCheckWorker(QThread):
     def run(self):
         result = check_for_updates(APP_VERSION)
         self.result_ready.emit(result, self.manual)
+
+
+class UpdateInstallWorker(QThread):
+    """Background worker thread for downloading and installing an update from GitHub Releases."""
+
+    install_finished = pyqtSignal(dict)
+
+    def __init__(
+        self,
+        tarball_url: str = "",
+        flatpak_url: str = "",
+        latest_version: str = "",
+        parent: QObject | None = None,
+    ):
+        super().__init__(parent)
+        self.tarball_url = tarball_url
+        self.flatpak_url = flatpak_url
+        self.latest_version = latest_version
+
+    def run(self):
+        res = install_update_from_github(
+            tarball_url=self.tarball_url,
+            flatpak_url=self.flatpak_url,
+            latest_version=self.latest_version,
+        )
+        self.install_finished.emit(res)
 
 
 def load_config() -> dict:
@@ -2017,6 +2165,11 @@ class MainWindow(QMainWindow):
         self._input_presets: list[str] = []
         self._first_minimize_tip_shown = False
         self._loading_ui = False
+        self._latest_release_url = GITHUB_RELEASES_PAGE_URL
+        self._latest_tarball_url = ""
+        self._latest_flatpak_url = ""
+        self._latest_version_tag = ""
+        self._last_notified_update_version = ""
 
         self.setWindowTitle(f"EasyEffects Auto Preset Manager v{APP_VERSION}")
         self.resize(840, 740)
@@ -2030,6 +2183,12 @@ class MainWindow(QMainWindow):
         # Connect worker signals
         self.worker.state_changed.connect(self._on_state_changed)
         self.worker.preset_switched.connect(self._on_preset_switched)
+
+        # Periodic 6-hour background update check timer
+        self._periodic_update_timer = QTimer(self)
+        self._periodic_update_timer.setInterval(6 * 60 * 60 * 1000)
+        self._periodic_update_timer.timeout.connect(self._on_periodic_update_timer)
+        self._periodic_update_timer.start()
 
     def _init_ui(self):
         central = QWidget(self)
@@ -2108,14 +2267,19 @@ class MainWindow(QMainWindow):
         update_banner_layout.setContentsMargins(8, 4, 8, 4)
         self.lbl_update_banner = QLabel("A new version of EasyEffects Auto Preset is available!", self.update_banner)
         self.lbl_update_banner.setStyleSheet("color: white; font-weight: bold;")
-        self.btn_open_release = QPushButton("Download Update", self.update_banner)
+        self.btn_install_update = QPushButton("⬇ Install Update", self.update_banner)
+        self.btn_install_update.setStyleSheet(
+            "background-color: #16a34a; color: #ffffff; font-weight: bold; border-radius: 4px; padding: 4px 12px;"
+        )
+        self.btn_install_update.clicked.connect(self.trigger_install_update)
+        self.btn_open_release = QPushButton("Release Notes", self.update_banner)
         self.btn_open_release.setStyleSheet(
             "background-color: #ffffff; color: #0d47a1; font-weight: bold; border-radius: 4px; padding: 4px 12px;"
         )
-        self._latest_release_url = GITHUB_RELEASES_PAGE_URL
         self.btn_open_release.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self._latest_release_url)))
         update_banner_layout.addWidget(self.lbl_update_banner)
         update_banner_layout.addStretch()
+        update_banner_layout.addWidget(self.btn_install_update)
         update_banner_layout.addWidget(self.btn_open_release)
         self.update_banner.setVisible(False)
         main_layout.addWidget(self.update_banner)
@@ -2329,14 +2493,21 @@ class MainWindow(QMainWindow):
         )
         updates_layout = QHBoxLayout(updates_frame)
         self.lbl_version_status = QLabel(f"<b>Version:</b> v{APP_VERSION} — Ready", updates_frame)
-        self.chk_updates_startup = QCheckBox("Check for updates on startup", updates_frame)
+        self.chk_updates_startup = QCheckBox("Check for updates automatically", updates_frame)
         self.chk_updates_startup.setChecked(self.config.get("check_updates_on_startup", True))
+        self.btn_install_update_about = QPushButton("⬇ Install Update", updates_frame)
+        self.btn_install_update_about.setStyleSheet(
+            "background-color: #16a34a; color: white; font-weight: bold; border-radius: 4px; padding: 6px 14px;"
+        )
+        self.btn_install_update_about.setVisible(False)
+        self.btn_install_update_about.clicked.connect(self.trigger_install_update)
         self.btn_check_updates = QPushButton("🔄 Check for Updates", updates_frame)
         self.btn_check_updates.setStyleSheet("font-weight: bold; padding: 6px 14px;")
         self.btn_check_updates.clicked.connect(lambda: self.trigger_update_check(manual=True))
         updates_layout.addWidget(self.lbl_version_status)
         updates_layout.addStretch()
         updates_layout.addWidget(self.chk_updates_startup)
+        updates_layout.addWidget(self.btn_install_update_about)
         updates_layout.addWidget(self.btn_check_updates)
         layout_about.addWidget(updates_frame)
 
@@ -2669,8 +2840,12 @@ class MainWindow(QMainWindow):
         self._on_refresh_presets_clicked()
 
     # --------------------------------------------------------------------------
-    # Update Checker
+    # Update Checker & Auto-Installer
     # --------------------------------------------------------------------------
+
+    def _on_periodic_update_timer(self):
+        if self.config.get("check_updates_on_startup", True):
+            self.trigger_update_check(manual=False)
 
     def trigger_update_check(self, manual: bool = False):
         self.btn_check_updates.setEnabled(False)
@@ -2687,17 +2862,28 @@ class MainWindow(QMainWindow):
         msg = result.get("message", "")
         self.lbl_version_status.setText(f"<b>Version:</b> v{APP_VERSION} — {msg}")
         self._latest_release_url = result.get("release_url", GITHUB_RELEASES_PAGE_URL)
+        self._latest_tarball_url = result.get("tarball_download_url", "")
+        self._latest_flatpak_url = result.get("flatpak_download_url", "")
+        self._latest_version_tag = result.get("latest_version", "")
 
         if result.get("update_available"):
-            latest = result.get("latest_version", "")
+            latest = self._latest_version_tag
             self.lbl_update_banner.setText(
                 f"🎉 Update available: EasyEffects Auto Preset {latest} (current: v{APP_VERSION})"
             )
+            self.btn_install_update.setText(f"⬇ Install {latest}")
+            self.btn_install_update_about.setText(f"⬇ Install {latest}")
+            self.btn_install_update_about.setVisible(True)
             self.update_banner.setVisible(True)
-            if hasattr(self, "tray_icon") and self.tray_icon.isVisible():
+            if (
+                hasattr(self, "tray_icon")
+                and self.tray_icon.isVisible()
+                and self._last_notified_update_version != latest
+            ):
+                self._last_notified_update_version = latest
                 self.tray_icon.showMessage(
                     "EasyEffects Auto Preset Update Available",
-                    f"Version {latest} is available on GitHub Releases.",
+                    f"Version {latest} is available. Open Settings to install in one click.",
                     QSystemTrayIcon.MessageIcon.Information,
                     4000,
                 )
@@ -2705,16 +2891,71 @@ class MainWindow(QMainWindow):
                 ans = QMessageBox.question(
                     self,
                     "Update Available",
-                    f"{msg}\n\nWould you like to open the GitHub Releases page to download {latest}?",
+                    f"{msg}\n\nWould you like to download and install {latest} automatically now?",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 )
                 if ans == QMessageBox.StandardButton.Yes:
-                    QDesktopServices.openUrl(QUrl(self._latest_release_url))
-        elif manual:
-            if result.get("ok"):
-                QMessageBox.information(self, "Up to Date", f"EasyEffects Auto Preset is up to date (v{APP_VERSION}).")
-            else:
-                QMessageBox.warning(self, "Update Check Failed", msg)
+                    self.trigger_install_update()
+        else:
+            self.btn_install_update_about.setVisible(False)
+            if manual:
+                if result.get("ok"):
+                    QMessageBox.information(self, "Up to Date", f"EasyEffects Auto Preset is up to date (v{APP_VERSION}).")
+                else:
+                    QMessageBox.warning(self, "Update Check Failed", msg)
+
+    def trigger_install_update(self):
+        self.btn_install_update.setEnabled(False)
+        self.btn_install_update.setText("Installing...")
+        self.btn_install_update_about.setEnabled(False)
+        self.btn_install_update_about.setText("Installing...")
+        self.lbl_version_status.setText(
+            f"<b>Version:</b> v{APP_VERSION} — Downloading and installing {self._latest_version_tag or 'update'}..."
+        )
+        self._install_worker = UpdateInstallWorker(
+            tarball_url=self._latest_tarball_url,
+            flatpak_url=self._latest_flatpak_url,
+            latest_version=self._latest_version_tag,
+            parent=self,
+        )
+        self._install_worker.install_finished.connect(self._on_install_update_finished)
+        self._install_worker.start()
+
+    @pyqtSlot(dict)
+    def _on_install_update_finished(self, res: dict):
+        self.btn_install_update.setEnabled(True)
+        self.btn_install_update_about.setEnabled(True)
+        latest = self._latest_version_tag or "Update"
+        self.btn_install_update.setText(f"⬇ Install {latest}")
+        self.btn_install_update_about.setText(f"⬇ Install {latest}")
+
+        msg = res.get("message", "")
+        self.lbl_version_status.setText(f"<b>Version:</b> v{APP_VERSION} — {msg}")
+        if res.get("ok") and res.get("updated"):
+            QMessageBox.information(
+                self,
+                "Update Installed",
+                f"{msg}\n\nRestarting EasyEffects Auto Preset now...",
+            )
+            # Restart systemd user service or re-exec
+            try:
+                svc = subprocess.run(
+                    ["systemctl", "--user", "is-active", "easyeffects-auto-preset.service"],
+                    capture_output=True,
+                    text=True,
+                )
+                if svc.stdout.strip() == "active":
+                    subprocess.Popen(["systemctl", "--user", "restart", "easyeffects-auto-preset.service"])
+                    QApplication.quit()
+                    return
+            except Exception:
+                pass
+            target_bin = Path.home() / ".local" / "bin" / "easyeffects-auto-preset"
+            if target_bin.is_file():
+                subprocess.Popen([str(target_bin)])
+                QApplication.quit()
+        elif not res.get("ok"):
+            QMessageBox.warning(self, "Update Installation Failed", msg)
 
     # --------------------------------------------------------------------------
     # Live Stream Table & Window Close / Minimize Handling
@@ -2952,6 +3193,8 @@ class TrayManager(QObject):
         self.window.show()
         self.window.raise_()
         self.window.activateWindow()
+        if self.config.get("check_updates_on_startup", True):
+            self.window.trigger_update_check(manual=False)
 
     @pyqtSlot(str, str, list)
     def _on_worker_state_changed(self, mode: str, active_preset: str, streams: list):
@@ -3043,6 +3286,7 @@ def _is_our_app_process(pid: int) -> bool:
             "--check-deps",
             "--check-update",
             "-u",
+            "--self-update",
             "--list-presets",
             "-l",
             "--version",
@@ -3177,6 +3421,11 @@ def main():
         help="Check if EasyEffects and required audio packages are installed and exit",
     )
     parser.add_argument("-u", "--check-update", action="store_true", help="Check GitHub Releases for updates and exit")
+    parser.add_argument(
+        "--self-update",
+        action="store_true",
+        help="Download and install the latest release from GitHub Releases and restart the service",
+    )
     args = parser.parse_args()
 
     if args.install_presets:
@@ -3207,7 +3456,16 @@ def main():
         res = check_for_updates(APP_VERSION)
         print(res["message"])
         if res.get("update_available"):
-            print(f"Release URL: {res['release_url']}")
+            print(f"Release URL:  {res['release_url']}")
+            print(f"Download URL: {res.get('download_url', '')}")
+        sys.exit(0 if res.get("ok") else 1)
+
+    if args.self_update:
+        print(f"Checking and installing latest update (current version: v{APP_VERSION})...")
+        res = install_update_from_github()
+        print(res.get("message", ""))
+        if res.get("ok") and res.get("updated"):
+            subprocess.run(["systemctl", "--user", "restart", "easyeffects-auto-preset.service"], check=False)
         sys.exit(0 if res.get("ok") else 1)
 
     if args.switch:
