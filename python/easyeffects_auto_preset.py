@@ -75,7 +75,7 @@ AUTOSTART_FILE = Path.home() / ".config" / "autostart" / "easyeffects-auto-prese
 APP_DESKTOP_FILE = Path.home() / ".local" / "share" / "applications" / "easyeffects-auto-preset.desktop"
 USER_SHARED_PRESETS_DIR = Path.home() / ".local" / "share" / "easyeffects-auto-preset" / "presets"
 
-APP_VERSION = "0.5.1"
+APP_VERSION = "0.5.2"
 GITHUB_RELEASES_API_URL = "https://api.github.com/repos/russellmilliner/easyeffects-auto-preset/releases/latest"
 GITHUB_RELEASES_PAGE_URL = "https://github.com/russellmilliner/easyeffects-auto-preset/releases"
 
@@ -87,6 +87,7 @@ DEFAULT_CONFIG = {
     "meeting_mic_preset": "Meeting-Mic-Clean",
     "apply_mic_preset": False,
     "debounce_seconds": 2.0,
+    "meeting_onset_seconds": 3.5,
     "check_interval_seconds": 1.0,
     "detect_microphone": True,
     "detect_communication_role": True,
@@ -101,14 +102,34 @@ DEFAULT_CONFIG = {
 }
 
 KNOWN_MEETING_BINARIES = {
-    "zoom", "zoom.real", "teams", "slack", "discord", "discord-canary",
+    "zoom", "zoom.real", "teams", "teams-for-linux", "slack", "discord", "discord-canary",
     "webex", "skype", "skypeforlinux", "signal-desktop", "telegram-desktop",
 }
 
 MEETING_KEYWORDS = [
     "meet.google.com", "google meet", "zoom meeting", "teams call",
-    "slack huddle", "discord call", "webex", "gotomeeting", "chime",
+    "slack huddle", "discord call", "webex meeting", "gotomeeting", "chime",
 ]
+
+ALERT_ROLES = {"event", "notification", "alert", "bell", "ringtone", "filter", "test"}
+
+ALERT_KEYWORDS = (
+    "notification",
+    "alert",
+    "ringtone",
+    "ringer",
+    "chime",
+    "ping",
+    "ding",
+    "bell",
+    "sfx",
+    "sound effect",
+    "ui-sound",
+    "system-sound",
+    "message-new",
+    "call-incoming",
+    "incoming call",
+)
 
 KNOWN_MEDIA_BINARIES = {
     # Video & movie players / media centers
@@ -1955,6 +1976,23 @@ class SystemDependenciesDialog(QDialog):
 # Background Audio Stream Monitor
 # ==============================================================================
 
+def is_alert_or_notification_stream(block: dict[str, str]) -> bool:
+    """Return True if a PipeWire/PulseAudio stream represents a short notification, alert, or UI sound."""
+    role = block.get("media.role", "").lower().strip()
+    if role in ALERT_ROLES:
+        return True
+
+    category = block.get("media.category", "").lower().strip()
+    if "event" in category or "notification" in category:
+        return True
+
+    media = block.get("media.name", "").lower()
+    node = block.get("node.name", "").lower()
+    filename = block.get("media.filename", "").lower()
+    combined = f"{media} {node} {filename}"
+    return any(kw in combined for kw in ALERT_KEYWORDS)
+
+
 class AudioMonitorWorker(QObject):
     """Monitors PipeWire/PulseAudio sink-inputs and source-outputs."""
 
@@ -1968,6 +2006,7 @@ class AudioMonitorWorker(QObject):
         self._running = True
         self.current_mode = "unknown"  # "meeting", "youtube", "default"
         self.last_preset = ""
+        self._meeting_candidate_since = 0.0
         self._meeting_lost_at = 0.0
         self._youtube_lost_at = 0.0
 
@@ -1977,9 +2016,15 @@ class AudioMonitorWorker(QObject):
     def stop(self):
         self._running = False
 
-    def scan_streams(self) -> tuple[bool, bool, list[dict], str, str]:
-        """Inspect sink-inputs and source-outputs to determine meeting/youtube status."""
+    def scan_streams(self) -> tuple[bool, bool, list[dict], str, str, bool]:
+        """Inspect sink-inputs and source-outputs to determine meeting/youtube status.
+
+        Returns (raw_meeting_active, youtube_playing, stream_items, meeting_details, youtube_details, has_strong_meeting_signal).
+        `has_strong_meeting_signal` is True when an uncorked microphone stream or `communication`/`phone` role stream is active,
+        and False when meeting detection only matched a playback-only stream from a meeting app binary.
+        """
         meeting_active = False
+        has_strong_meeting_signal = False
         youtube_playing = False
         meeting_details = ""
         youtube_details = ""
@@ -1993,22 +2038,48 @@ class AudioMonitorWorker(QObject):
             source_blocks = []
 
         for sc in source_blocks:
+            corked = sc.get("Corked", sc.get("pulse.corked", "yes")).lower()
+            mute = sc.get("Mute", "no").lower()
+            is_recording = (corked in ("no", "false")) and (mute not in ("yes", "true"))
             app = sc.get("application.name", "Unknown App")
             binary = sc.get("application.process.binary", "").lower()
             media = sc.get("media.name", "")
-            if "speech-dispatcher" in binary or "sd_dummy" in binary:
+            node = sc.get("node.name", "").lower()
+            media_low = media.lower()
+
+            if (
+                "speech-dispatcher" in binary
+                or "sd_dummy" in binary
+                or "easyeffects" in binary
+                or "pavucontrol" in binary
+                or "peak detect" in media_low
+                or "monitor" in media_low
+                or "easyeffects" in node
+            ):
                 continue
 
+            if is_alert_or_notification_stream(sc):
+                stream_items.append({
+                    "type": "Microphone (Input)",
+                    "app": app,
+                    "media": media,
+                    "state": "Alert / Ignored",
+                    "trigger": "None (Alert Filter)",
+                })
+                continue
+
+            trig = "Meeting (Active Mic)" if (is_recording and self.config.get("detect_microphone", True)) else "None (Corked/Idle)"
             stream_items.append({
                 "type": "Microphone (Input)",
                 "app": app,
                 "media": media,
-                "state": "Recording",
-                "trigger": "Meeting",
+                "state": "Recording" if is_recording else "Idle / Corked",
+                "trigger": trig,
             })
 
-            if self.config.get("detect_microphone", True):
+            if is_recording and self.config.get("detect_microphone", True):
                 meeting_active = True
+                has_strong_meeting_signal = True
                 meeting_details = f"Microphone active: {app} ({media or binary})"
 
         # 2. Inspect sink inputs (Playback)
@@ -2020,43 +2091,57 @@ class AudioMonitorWorker(QObject):
 
         for sk in sink_blocks:
             corked = sk.get("Corked", sk.get("pulse.corked", "yes")).lower()
-            is_playing = (corked == "no" or corked == "false")
+            mute = sk.get("Mute", "no").lower()
+            is_playing = (corked in ("no", "false")) and (mute not in ("yes", "true"))
             app = sk.get("application.name", "")
             binary = sk.get("application.process.binary", "").lower()
             media = sk.get("media.name", "")
             role = sk.get("media.role", "").lower()
 
-            if "speech-dispatcher" in binary or "sd_dummy" in binary:
+            if "speech-dispatcher" in binary or "sd_dummy" in binary or "easyeffects" in binary:
+                continue
+
+            if is_alert_or_notification_stream(sk):
+                stream_items.append({
+                    "type": "Audio Playback",
+                    "app": app or binary or "Unknown",
+                    "media": media,
+                    "state": "Playing (Alert)" if is_playing else "Paused",
+                    "trigger": "None (Alert Sound Ignored)",
+                })
                 continue
 
             item_trigger = "None"
             is_sk_meeting = False
 
-            # Check meeting conditions
-            if self.config.get("detect_meeting_apps", True) and binary in KNOWN_MEETING_BINARIES:
-                is_sk_meeting = True
-                item_trigger = "Meeting App"
-            elif self.config.get("detect_communication_role", True) and role in ("communication", "phone"):
-                is_sk_meeting = True
-                item_trigger = "Communication Stream"
-            else:
-                for kw in MEETING_KEYWORDS:
-                    if kw in media.lower() or kw in app.lower():
+            # Only actively playing (uncorked) streams can trigger meeting or media detection
+            if is_playing:
+                if self.config.get("detect_communication_role", True) and role in ("communication", "phone"):
+                    is_sk_meeting = True
+                    has_strong_meeting_signal = True
+                    item_trigger = "Communication Stream"
+                else:
+                    for kw in MEETING_KEYWORDS:
+                        if kw in media.lower() or kw in app.lower():
+                            is_sk_meeting = True
+                            item_trigger = f"Meeting ({kw})"
+                            break
+                    if not is_sk_meeting and self.config.get("detect_meeting_apps", True) and binary in KNOWN_MEETING_BINARIES:
                         is_sk_meeting = True
-                        item_trigger = f"Meeting ({kw})"
-                        break
+                        item_trigger = "Meeting App (Playback)"
 
-            if is_sk_meeting:
-                meeting_active = True
-                meeting_details = f"Meeting app: {app} ({media})"
+                if is_sk_meeting:
+                    meeting_active = True
+                    if not meeting_details:
+                        meeting_details = f"Meeting app: {app} ({media})"
 
-            # Check YouTube, music, movie, and video playback (only when actively playing sound)
-            if not is_sk_meeting and is_playing:
-                matched_media, trig_label, media_detail = detect_media_playback_stream(sk, self.config)
-                if matched_media:
-                    item_trigger = trig_label
-                    youtube_playing = True
-                    youtube_details = media_detail
+                # Check YouTube, music, movie, and video playback (only when actively playing sound)
+                if not is_sk_meeting:
+                    matched_media, trig_label, media_detail = detect_media_playback_stream(sk, self.config)
+                    if matched_media:
+                        item_trigger = trig_label
+                        youtube_playing = True
+                        youtube_details = media_detail
 
             stream_items.append({
                 "type": "Audio Playback",
@@ -2066,10 +2151,10 @@ class AudioMonitorWorker(QObject):
                 "trigger": item_trigger,
             })
 
-        return meeting_active, youtube_playing, stream_items, meeting_details, youtube_details
+        return meeting_active, youtube_playing, stream_items, meeting_details, youtube_details, has_strong_meeting_signal
 
     def run_loop(self):
-        """Continuously evaluate audio state with debouncing."""
+        """Continuously evaluate audio state with alert-sound onset filtering and grace-period debouncing."""
         self.last_preset = get_current_loaded_preset()
 
         while self._running:
@@ -2078,15 +2163,34 @@ class AudioMonitorWorker(QObject):
                 continue
 
             try:
-                meeting_active, youtube_playing, stream_items, meet_info, yt_info = self.scan_streams()
+                raw_meeting, youtube_playing, stream_items, meet_info, yt_info, strong_signal = self.scan_streams()
                 now = time.time()
                 debounce = float(self.config.get("debounce_seconds", 2.0))
+                base_onset = float(self.config.get("meeting_onset_seconds", 3.5))
+
+                # Require sustained meeting activity before switching presets or pausing media
+                # so transient alert/notification sounds (or brief WebRTC mic probes) are ignored.
+                if raw_meeting:
+                    if self._meeting_candidate_since == 0.0:
+                        self._meeting_candidate_since = now
+                    required_onset = base_onset if strong_signal else max(base_onset * 2.0, 6.0)
+                    meeting_confirmed = (
+                        self.current_mode == "meeting"
+                        or (now - self._meeting_candidate_since) >= required_onset
+                    )
+                    if not meeting_confirmed:
+                        for st in stream_items:
+                            if st.get("trigger", "").startswith(("Meeting", "Communication")):
+                                st["trigger"] = f"{st['trigger']} (Verifying >{required_onset:.1f}s alert filter)"
+                else:
+                    self._meeting_candidate_since = 0.0
+                    meeting_confirmed = False
 
                 target_mode = "default"
                 reason = "Idle / Default"
 
-                # Priority: Meeting > YouTube > Default
-                if meeting_active:
+                # Priority: Confirmed Meeting > YouTube > Default
+                if meeting_confirmed:
                     target_mode = "meeting"
                     reason = meet_info or "Voice Meeting Active"
                     self._meeting_lost_at = 0.0
@@ -2376,13 +2480,24 @@ class MainWindow(QMainWindow):
         # Timing group
         grp_timing = QGroupBox("Switching Behavior", tab_presets)
         timing_layout = QHBoxLayout(grp_timing)
+        timing_layout.addWidget(QLabel("Alert Sound Filter (Min Meeting Duration):"))
+        self.spin_meeting_onset = QDoubleSpinBox(grp_timing)
+        self.spin_meeting_onset.setRange(0.0, 15.0)
+        self.spin_meeting_onset.setSingleStep(0.5)
+        self.spin_meeting_onset.setSuffix(" sec")
+        self.spin_meeting_onset.setToolTip(
+            "Ignore short alert/notification sounds and brief mic probes from meeting apps shorter than this duration."
+        )
+        timing_layout.addWidget(self.spin_meeting_onset)
+        timing_layout.addSpacing(14)
+
         timing_layout.addWidget(QLabel("Debounce Delay (Grace Period):"))
         self.spin_debounce = QDoubleSpinBox(grp_timing)
         self.spin_debounce.setRange(0.5, 10.0)
         self.spin_debounce.setSingleStep(0.5)
         self.spin_debounce.setSuffix(" sec")
         timing_layout.addWidget(self.spin_debounce)
-        timing_layout.addSpacing(20)
+        timing_layout.addSpacing(14)
 
         self.chk_notify = QCheckBox("Show desktop notification on preset change", grp_timing)
         timing_layout.addWidget(self.chk_notify)
@@ -2582,6 +2697,7 @@ class MainWindow(QMainWindow):
         ):
             chk.toggled.connect(self._on_ui_modified)
         self.spin_debounce.valueChanged.connect(self._on_ui_modified)
+        self.spin_meeting_onset.valueChanged.connect(self._on_ui_modified)
 
     def _get_ui_config_state(self) -> dict:
         return {
@@ -2597,6 +2713,7 @@ class MainWindow(QMainWindow):
             "show_notifications": self.chk_notify.isChecked(),
             "check_updates_on_startup": self.chk_updates_startup.isChecked(),
             "debounce_seconds": round(float(self.spin_debounce.value()), 2),
+            "meeting_onset_seconds": round(float(self.spin_meeting_onset.value()), 2),
         }
 
     def _get_saved_comparable_state(self) -> dict:
@@ -2613,6 +2730,7 @@ class MainWindow(QMainWindow):
             "show_notifications": bool(self.config.get("show_notifications", True)),
             "check_updates_on_startup": bool(self.config.get("check_updates_on_startup", True)),
             "debounce_seconds": round(float(self.config.get("debounce_seconds", 2.0)), 2),
+            "meeting_onset_seconds": round(float(self.config.get("meeting_onset_seconds", 3.5)), 2),
         }
 
     def has_unsaved_changes(self) -> bool:
@@ -2766,6 +2884,7 @@ class MainWindow(QMainWindow):
             self.chk_notify.setChecked(bool(self.config.get("show_notifications", True)))
             self.chk_updates_startup.setChecked(bool(self.config.get("check_updates_on_startup", True)))
             self.spin_debounce.setValue(round(float(self.config.get("debounce_seconds", 2.0)), 2))
+            self.spin_meeting_onset.setValue(round(float(self.config.get("meeting_onset_seconds", 3.5)), 2))
         finally:
             self._loading_ui = False
         self._on_ui_modified()

@@ -21,6 +21,7 @@ const DEFAULT_CONFIG_JSON: &str = r#"{
   "meeting_mic_preset": "Meeting-Mic-Clean",
   "apply_mic_preset": false,
   "debounce_seconds": 2.0,
+  "meeting_onset_seconds": 3.5,
   "check_interval_seconds": 1.0,
   "detect_microphone": true,
   "detect_communication_role": true,
@@ -41,6 +42,7 @@ const KNOWN_MEETING_BINARIES: &[&str] = &[
     "zoom",
     "zoom.real",
     "teams",
+    "teams-for-linux",
     "slack",
     "discord",
     "discord-canary",
@@ -58,9 +60,37 @@ const MEETING_KEYWORDS: &[&str] = &[
     "teams call",
     "slack huddle",
     "discord call",
-    "webex",
+    "webex meeting",
     "gotomeeting",
+    "amazon chime",
+];
+
+const ALERT_ROLES: &[&str] = &[
+    "event",
+    "notification",
+    "alert",
+    "bell",
+    "ringtone",
+    "filter",
+    "test",
+];
+
+const ALERT_KEYWORDS: &[&str] = &[
+    "notification",
+    "alert",
+    "ringtone",
+    "ringer",
     "chime",
+    "ping",
+    "ding",
+    "bell",
+    "sfx",
+    "sound effect",
+    "ui-sound",
+    "system-sound",
+    "message-new",
+    "call-incoming",
+    "incoming call",
 ];
 
 /// Native music, movie, and video player binaries that should switch to `youtube_preset`.
@@ -254,6 +284,8 @@ pub struct Config {
     pub apply_mic_preset: bool,
     #[serde(default = "default_debounce")]
     pub debounce_seconds: f64,
+    #[serde(default = "default_meeting_onset")]
+    pub meeting_onset_seconds: f64,
     #[serde(default = "default_interval")]
     pub check_interval_seconds: f64,
     #[serde(default = "default_true")]
@@ -283,6 +315,9 @@ fn default_meeting_preset() -> String {
 }
 fn default_debounce() -> f64 {
     2.0
+}
+fn default_meeting_onset() -> f64 {
+    3.5
 }
 fn default_interval() -> f64 {
     1.0
@@ -470,9 +505,33 @@ fn parse_pactl_blocks(raw: &str, block_prefix: &str) -> Vec<HashMap<String, Stri
 #[derive(Debug)]
 pub struct AudioEvaluation {
     pub meeting_active: bool,
+    pub meeting_strong_signal: bool,
     pub youtube_playing: bool,
     pub meeting_info: String,
     pub youtube_info: String,
+}
+
+/// Returns true if a PipeWire / PulseAudio stream is a short notification, ringtone, or UI alert sound.
+pub fn is_alert_or_notification_stream(stream: &HashMap<String, String>) -> bool {
+    let role = stream
+        .get("media.role")
+        .cloned()
+        .unwrap_or_default()
+        .to_lowercase();
+    if ALERT_ROLES.contains(&role.as_str()) {
+        return true;
+    }
+    let media_lower = stream
+        .get("media.name")
+        .cloned()
+        .unwrap_or_default()
+        .to_lowercase();
+    for kw in ALERT_KEYWORDS {
+        if media_lower.contains(kw) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Inspects a single PipeWire / PulseAudio sink-input property map to determine whether
@@ -555,6 +614,7 @@ pub fn detect_media_playback_stream(sk: &HashMap<String, String>, config: &Confi
 pub fn evaluate_audio_streams(config: &Config) -> AudioEvaluation {
     let mut eval = AudioEvaluation {
         meeting_active: false,
+        meeting_strong_signal: false,
         youtube_playing: false,
         meeting_info: String::new(),
         youtube_info: String::new(),
@@ -565,16 +625,53 @@ pub fn evaluate_audio_streams(config: &Config) -> AudioEvaluation {
         let text = String::from_utf8_lossy(&out.stdout);
         let sources = parse_pactl_blocks(&text, "Source Output #");
         for sc in sources {
-            let app = sc.get("application.name").cloned().unwrap_or_default();
-            let binary = sc.get("application.process.binary").cloned().unwrap_or_default().to_lowercase();
-            let media = sc.get("media.name").cloned().unwrap_or_default();
+            let corked = sc
+                .get("Corked")
+                .or_else(|| sc.get("pulse.corked"))
+                .cloned()
+                .unwrap_or_else(|| "no".to_string())
+                .to_lowercase();
+            let mute = sc
+                .get("Mute")
+                .cloned()
+                .unwrap_or_else(|| "no".to_string())
+                .to_lowercase();
+            let is_recording = (corked == "no" || corked == "false") && mute != "yes" && mute != "true";
+            if !is_recording {
+                continue;
+            }
 
-            if binary.contains("speech-dispatcher") || binary.contains("sd_dummy") {
+            let app = sc.get("application.name").cloned().unwrap_or_default();
+            let app_lower = app.to_lowercase();
+            let binary = sc
+                .get("application.process.binary")
+                .cloned()
+                .unwrap_or_default()
+                .to_lowercase();
+            let media = sc.get("media.name").cloned().unwrap_or_default();
+            let media_lower = media.to_lowercase();
+
+            if binary.contains("speech-dispatcher")
+                || binary.contains("sd_dummy")
+                || binary.contains("easyeffects")
+                || binary.contains("pavucontrol")
+                || app_lower.contains("easyeffects")
+                || app_lower.contains("pavucontrol")
+            {
+                continue;
+            }
+
+            if media_lower.contains("peak detect") || media_lower.contains("monitor") {
+                continue;
+            }
+
+            if is_alert_or_notification_stream(&sc) {
                 continue;
             }
 
             if config.detect_microphone {
                 eval.meeting_active = true;
+                eval.meeting_strong_signal = true;
                 eval.meeting_info = format!("Microphone in use by {} ({})", app, media);
                 break;
             }
@@ -592,10 +689,22 @@ pub fn evaluate_audio_streams(config: &Config) -> AudioEvaluation {
                 .cloned()
                 .unwrap_or_else(|| "yes".to_string())
                 .to_lowercase();
-            let is_playing = corked == "no" || corked == "false";
+            let mute = sk
+                .get("Mute")
+                .cloned()
+                .unwrap_or_else(|| "no".to_string())
+                .to_lowercase();
+            let is_playing = (corked == "no" || corked == "false") && mute != "yes" && mute != "true";
+            if !is_playing {
+                continue;
+            }
 
             let app = sk.get("application.name").cloned().unwrap_or_default();
-            let binary = sk.get("application.process.binary").cloned().unwrap_or_default().to_lowercase();
+            let binary = sk
+                .get("application.process.binary")
+                .cloned()
+                .unwrap_or_default()
+                .to_lowercase();
             let media = sk.get("media.name").cloned().unwrap_or_default();
             let role = sk.get("media.role").cloned().unwrap_or_default().to_lowercase();
 
@@ -603,24 +712,37 @@ pub fn evaluate_audio_streams(config: &Config) -> AudioEvaluation {
                 continue;
             }
 
+            // Ignore explicit notification / alert sounds
+            if is_alert_or_notification_stream(&sk) {
+                continue;
+            }
+
             let mut is_sk_meeting = false;
 
-            // Meeting detection via playback role or application
-            if config.detect_meeting_apps && KNOWN_MEETING_BINARIES.contains(&binary.as_str()) {
+            // Meeting detection via playback role or application (only when uncorked and not an alert)
+            if config.detect_communication_role && (role == "communication" || role == "phone") {
                 eval.meeting_active = true;
-                is_sk_meeting = true;
-                eval.meeting_info = format!("Meeting app: {} ({})", app, media);
-            } else if config.detect_communication_role && (role == "communication" || role == "phone") {
-                eval.meeting_active = true;
+                eval.meeting_strong_signal = true;
                 is_sk_meeting = true;
                 eval.meeting_info = format!("Communication audio stream ({})", app);
             } else {
                 for kw in MEETING_KEYWORDS {
                     if media.to_lowercase().contains(kw) || app.to_lowercase().contains(kw) {
                         eval.meeting_active = true;
+                        eval.meeting_strong_signal = true;
                         is_sk_meeting = true;
                         eval.meeting_info = format!("Meeting detected: {}", kw);
                         break;
+                    }
+                }
+                if !is_sk_meeting
+                    && config.detect_meeting_apps
+                    && KNOWN_MEETING_BINARIES.contains(&binary.as_str())
+                {
+                    eval.meeting_active = true;
+                    is_sk_meeting = true;
+                    if eval.meeting_info.is_empty() {
+                        eval.meeting_info = format!("Meeting app: {} ({})", app, media);
                     }
                 }
             }
@@ -1198,12 +1320,14 @@ fn run_daemon(config: Config) {
 
     let mut current_mode = "unknown".to_string();
     let mut last_preset = get_current_loaded_preset();
+    let mut meeting_started_at: Option<Instant> = None;
     let mut meeting_lost_at: Option<Instant> = None;
     let mut youtube_lost_at: Option<Instant> = None;
     let mut last_update_check = Instant::now();
     let update_check_interval = Duration::from_secs(6 * 60 * 60);
 
     let debounce = Duration::from_secs_f64(config.debounce_seconds);
+    let base_onset_secs = config.meeting_onset_seconds.max(0.0);
     let interval = Duration::from_secs_f64(config.check_interval_seconds.max(0.5));
 
     loop {
@@ -1227,7 +1351,28 @@ fn run_daemon(config: Config) {
         let mut target_mode = "default".to_string();
         let mut reason = "Default / Idle".to_string();
 
+        // Filter out brief alert/notification sounds from meeting apps before entering meeting mode
+        let mut confirmed_meeting = false;
         if eval.meeting_active {
+            meeting_lost_at = None;
+            if current_mode == "meeting" {
+                confirmed_meeting = true;
+            } else {
+                let started = meeting_started_at.get_or_insert(now);
+                let required_onset = if eval.meeting_strong_signal {
+                    Duration::from_secs_f64(base_onset_secs)
+                } else {
+                    Duration::from_secs_f64((base_onset_secs * 2.0).max(6.0))
+                };
+                if started.elapsed() >= required_onset {
+                    confirmed_meeting = true;
+                }
+            }
+        } else {
+            meeting_started_at = None;
+        }
+
+        if confirmed_meeting {
             target_mode = "meeting".to_string();
             reason = eval.meeting_info;
             meeting_lost_at = None;
@@ -1240,7 +1385,7 @@ fn run_daemon(config: Config) {
                     );
                 }
             }
-        } else {
+        } else if !eval.meeting_active {
             if current_mode == "meeting" {
                 let lost = meeting_lost_at.get_or_insert(now);
                 if lost.elapsed() < debounce {
@@ -1297,7 +1442,7 @@ fn run_daemon(config: Config) {
 #[command(
     name = "easyeffects-auto-preset",
     author = "Russell Milliner <russell.milliner@gmail.com>",
-    version = "0.5.1",
+    version = "0.5.2",
     about = "Automated EasyEffects preset switcher for Voice Meetings, YouTube, Music, Movies, and Video on Linux (PipeWire / KDE Plasma)"
 )]
 struct Args {
@@ -1606,5 +1751,26 @@ mod tests {
         dummy.insert("application.process.binary".to_string(), "sd_dummy".to_string());
         dummy.insert("media.role".to_string(), "music".to_string());
         assert!(detect_media_playback_stream(&dummy, &cfg).is_none());
+    }
+
+    #[test]
+    fn test_alert_and_notification_stream_filtering() {
+        let mut teams_ding = HashMap::new();
+        teams_ding.insert("application.name".to_string(), "Teams for Linux".to_string());
+        teams_ding.insert("application.process.binary".to_string(), "teams-for-linux".to_string());
+        teams_ding.insert("media.role".to_string(), "event".to_string());
+        teams_ding.insert("media.name".to_string(), "Playback".to_string());
+        assert!(is_alert_or_notification_stream(&teams_ding));
+
+        let mut slack_ping = HashMap::new();
+        slack_ping.insert("application.name".to_string(), "Slack".to_string());
+        slack_ping.insert("media.name".to_string(), "Notification Sound".to_string());
+        assert!(is_alert_or_notification_stream(&slack_ping));
+
+        let mut real_call = HashMap::new();
+        real_call.insert("application.name".to_string(), "Teams for Linux".to_string());
+        real_call.insert("media.role".to_string(), "communication".to_string());
+        real_call.insert("media.name".to_string(), "WebRTC VoiceEngine".to_string());
+        assert!(!is_alert_or_notification_stream(&real_call));
     }
 }

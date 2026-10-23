@@ -50,6 +50,11 @@
     <binary>easyeffects-auto-preset-gui</binary>
   </provides>
   <releases>
+    <release version="0.5.2" date="2026-10-23">
+      <description>
+        <p>Ignore meeting app alert/notification sounds and brief mic probes without pausing media or switching presets</p>
+      </description>
+    </release>
     <release version="0.5.1" date="2026-10-22">
       <description>
         <p>Add periodic 6-hour update checks, check on window restore, and one-click in-app update installer (--self-update)</p>
