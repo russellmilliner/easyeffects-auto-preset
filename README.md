@@ -1,7 +1,7 @@
 # EasyEffects Auto Preset
 
-[![Version](https://img.shields.io/badge/Version-v0.5.1-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/easyeffects-auto-preset/releases/tag/v0.5.1)
-[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.5.1-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.1/easyeffects-auto-preset-v0.5.1-x86_64.flatpak)
+[![Version](https://img.shields.io/badge/Version-v0.5.3-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/easyeffects-auto-preset/releases/tag/v0.5.3)
+[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.5.3-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.3/easyeffects-auto-preset-v0.5.3-x86_64.flatpak)
 [![Platform: Linux x86_64](https://img.shields.io/badge/Platform-Linux%20x86__64-fcc624?style=for-the-badge&logo=linux&logoColor=black)](https://www.kernel.org/)
 [![Desktop: KDE Plasma 6](https://img.shields.io/badge/Desktop-KDE%20Plasma%206%20%2F%20Qt%206-1d99f3?style=for-the-badge&logo=kde&logoColor=white)](https://kde.org/plasma-desktop/)
 [![Audio: PipeWire](https://img.shields.io/badge/Audio-PipeWire%20%2F%20PulseAudio-e05d44?style=for-the-badge&logo=soundcharts&logoColor=white)](https://pipewire.org/)
@@ -18,18 +18,19 @@
 [**EasyEffects**](https://github.com/wwmm/easyeffects) is a powerful system-wide DSP and equalizer for Linux, but **a preset tuned for music and movies sounds terrible in a voice meeting**—and vice versa:
 
 - **Music, Movies & YouTube** benefit from deep sub-bass extension, warm low-end punch, and sparkling highs (e.g. **`Crystal more Bass`**).
-- **Voice Meetings & Calls** (Google Meet, Zoom, Microsoft Teams, Slack, Discord) suffer when heavy bass is active: desk thumps, HVAC rumble, and male vocal proximity effect become boomy and fatiguing, while quiet and loud participants require fast dynamic leveling and speech-band clarity (e.g. **`Compressed-Max`** or **`Meeting-Voice-Clear`**).
+- **Voice Meetings & Calls** (Google Meet, Zoom, Microsoft Teams, Slack, Discord, Amazon Chime, Webex) suffer when heavy bass is active: desk thumps, HVAC rumble, and male vocal proximity effect become boomy and fatiguing, while quiet and loud participants require fast dynamic leveling and speech-band clarity (e.g. **`Compressed-Max`** or **`Meeting-Voice-Clear`**).
 
-**EasyEffects Auto Preset** eliminates manual preset switching completely. Running silently in the background (or in your system tray), it inspects your live **PipeWire / PulseAudio** audio streams (`sink-inputs` and `source-outputs`) every second and automatically loads the right EasyEffects preset based on a **3-tier priority engine**:
+**EasyEffects Auto Preset** eliminates manual preset switching completely. Running silently in the background (or in your system tray), it inspects your live **PipeWire / PulseAudio** audio streams (`sink-inputs` and `source-outputs` via locale-independent `pactl -f json`) every second and automatically loads the right EasyEffects preset based on a **3-tier priority engine**:
 
 | Priority | Active Context | What Triggers It | Default Preset Applied |
 | :---: | :--- | :--- | :--- |
-| **1 (Highest)** | **🎤 Voice Meeting / Call** | • Any active microphone recording stream (`source-outputs`)<br>• Native meeting apps (`zoom`, `teams`, `slack`, `discord`, `webex`, `skype`, `signal-desktop`, `telegram-desktop`)<br>• Browser tabs & streams matching `meet.google.com`, `Google Meet`, `Zoom Meeting`, `Teams Call`, `Slack Huddle`, `Discord Call`<br>• Any stream with `media.role` = `phone` or `communication` | **`Compressed-Max`** *(or **`Meeting-Voice-Clear`**)*<br>+ optional input preset (**`Meeting-Mic-Clean`**) |
+| **1 (Highest)** | **🎤 Voice Meeting / Call** | • Any active microphone recording stream (`source-outputs`)<br>• Native meeting apps (`zoom`, `teams`, `slack`, `discord`, `webex`, `skype`, `signal-desktop`, `telegram-desktop`)<br>• Browser tabs & streams matching `meet.google.com`, `Google Meet`, `Zoom Meeting`, `Teams Call`, `Slack Huddle`, `Discord Call`, `Amazon Chime`<br>• Any stream with `media.role` = `phone` or `communication`<br>• Sustained beyond the configurable **Meeting Onset Delay** (default `3.5s`) so transient notification chimes and brief mic probes are ignored | **`Compressed-Max`** *(or **`Meeting-Voice-Clear`**)*<br>+ optional input preset (**`Meeting-Mic-Clean`**) |
 | **2** | **▶ YouTube, Music, Movies & Video** | • **Web Browsers & Streaming**: Active audio playback (`Corked: no`) on YouTube, YouTube Music, Netflix, Disney+, Prime Video, Hulu, Max, Peacock, Paramount+, Apple TV, Crunchyroll, Twitch, Vimeo, Plex, Jellyfin, Emby, Spotify, SoundCloud, Tidal, Deezer, Qobuz, Bandcamp, Pandora, Apple Music<br>• **Native Video & Movie Players**: `vlc`, `mpv`, `celluloid`, `haruna`, `totem` (GNOME Videos), `clapper`, `showtime`, `dragon`, `kaffeine`, `smplayer`, `kodi`, `plex`, `jellyfinmediaplayer`, `stremio`, `freetube`<br>• **Native Music Players**: `spotify`, `elisa`, `strawberry`, `clementine`, `rhythmbox`, `amberol`, `lollypop`, `g4music`, `audacious`, `deadbeef`, `qmmp`, `cmus`, `mpd`, `cantata`, `amarok`, `quodlibet`, `fooyin`, `tauonmb`, `feishin`, `supersonic`, `plexamp`, `shortwave`<br>• **PipeWire Media Roles**: Any playing stream with `media.role` = `music`, `video`, or `movie` | **`Crystal more Bass`** |
 | **3 (Fallback)** | **🎵 Default / Idle** | • No active voice call and no active media playback after the configurable **debounce grace period** (default `2.0s`) expires | **`Crystal more Bass`** *(or your chosen idle preset)* |
 
-### Why Smart Debouncing Matters
-When you skip a track on Spotify, buffer a YouTube video, or pause between sentences in a meeting, PipeWire briefly marks the stream as corked/idle. **EasyEffects Auto Preset** waits for a configurable **Debounce Grace Period** (default `2.0 seconds`) before leaving Meeting or Media mode—preventing jarring preset switches during momentary audio gaps.
+### Why Smart Debouncing & Alert Filtering Matter
+- **Meeting Onset Filter (`meeting_onset_seconds`, default `3.5s`):** Short notification sounds (`media.role=event`/`notification` or whole-word alert keywords like `ding`, `ping`, `ringtone`) and brief WebRTC microphone probes are filtered out so a Slack or Teams chat message never pauses your music or switches presets.
+- **Debounce Grace Period (`debounce_seconds`, default `2.0s`):** When you skip a track on Spotify, buffer a YouTube video, or pause between sentences in a meeting, PipeWire briefly marks the stream as corked/idle. **EasyEffects Auto Preset** waits for the grace period before leaving Meeting or Media mode—preventing jarring preset switches during momentary audio gaps.
 
 ---
 
@@ -49,19 +50,19 @@ When you skip a track on Spotify, buffer a YouTube video, or pause between sente
 
 ---
 
-## 📥 Release & Downloads (`v0.5.1`)
+## 📥 Release & Downloads (`v0.5.3`)
 
 | Asset | Download Link | Description |
 | :--- | :--- | :--- |
-| **Flatpak Bundle (`x86_64`)** | [**`easyeffects-auto-preset-v0.5.1-x86_64.flatpak`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.1/easyeffects-auto-preset-v0.5.1-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.1/easyeffects-auto-preset-v0.5.1-x86_64.flatpak.sha256)) | Self-contained Flatpak bundle (`org.kde.Platform//6.11`) with Rust daemon, PyQt6 GUI & bundled presets |
-| **Linux Release Archive (`x86_64`)** | [**`easyeffects-auto-preset-v0.5.1-linux-x86_64.tar.gz`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.1/easyeffects-auto-preset-v0.5.1-linux-x86_64.tar.gz) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.1/easyeffects-auto-preset-v0.5.1-linux-x86_64.tar.gz.sha256)) | Native Rust daemon binary, PyQt6 GUI & tray script, custom EasyEffects presets, systemd user service & desktop entry |
-| **Standalone Rust Daemon (`x86_64`)** | [**`easyeffects-auto-preset-v0.5.1-x86_64`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.1/easyeffects-auto-preset-v0.5.1-x86_64) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.1/easyeffects-auto-preset-v0.5.1-x86_64.sha256)) | Standalone compiled Rust CLI/daemon binary |
+| **Flatpak Bundle (`x86_64`)** | [**`easyeffects-auto-preset-v0.5.3-x86_64.flatpak`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.3/easyeffects-auto-preset-v0.5.3-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.3/easyeffects-auto-preset-v0.5.3-x86_64.flatpak.sha256)) | Self-contained Flatpak bundle (`org.kde.Platform//6.11`) with bundled `PyQt6`, Rust daemon, GUI & presets |
+| **Linux Release Archive (`x86_64`)** | [**`easyeffects-auto-preset-v0.5.3-linux-x86_64.tar.gz`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.3/easyeffects-auto-preset-v0.5.3-linux-x86_64.tar.gz) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.3/easyeffects-auto-preset-v0.5.3-linux-x86_64.tar.gz.sha256)) | Native Rust daemon binary, PyQt6 GUI & tray script, custom EasyEffects presets, systemd user service & desktop entry |
+| **Standalone Rust Daemon (`x86_64`)** | [**`easyeffects-auto-preset-v0.5.3-x86_64`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.3/easyeffects-auto-preset-v0.5.3-x86_64) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.3/easyeffects-auto-preset-v0.5.3-x86_64.sha256)) | Standalone compiled Rust CLI/daemon binary |
 
 ### Quick Flatpak Install (from GitHub Release)
 
 ```bash
-curl -LO https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.1/easyeffects-auto-preset-v0.5.1-x86_64.flatpak
-flatpak install --user -y easyeffects-auto-preset-v0.5.1-x86_64.flatpak
+curl -LO https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.3/easyeffects-auto-preset-v0.5.3-x86_64.flatpak
+flatpak install --user -y easyeffects-auto-preset-v0.5.3-x86_64.flatpak
 flatpak run io.github.russellmilliner.easyeffects_auto_preset
 ```
 
@@ -80,22 +81,24 @@ If you find EasyEffects Auto Preset helpful for your audio workflow and meetings
 ## ✨ Key Features
 
 - 🎧 **Universal Music, Movie, Video & YouTube Detection:** Automatically switches to your media preset (**`Crystal more Bass`**) whenever audio is actively playing in web browsers (YouTube, YouTube Music, Netflix, Disney+, Prime Video, Twitch, Plex, SoundCloud, etc.) or native desktop media players (Spotify, VLC, mpv, Celluloid, Haruna, Elisa, Strawberry, Rhythmbox, Amberol, Lollypop, Audacious, Kodi, Plex, Jellyfin, Stremio, FreeTube).
-- 🎤 **Automatic Voice Meeting Detection (Top Priority):** Immediately switches to **`Compressed-Max`** or **`Meeting-Voice-Clear`** (plus optional **`Meeting-Mic-Clean`** input preset) whenever a voice meeting or microphone stream is active.
-- ⏸️ **Auto-Pause Media During Meetings (Configurable):** Automatically pauses any active MPRIS2 media applications (YouTube/browsers, Spotify, VLC, mpv, Elisa, etc.) when a meeting starts and ensures they remain paused for the duration of the call. Can be toggled on/off in Settings or directly from the System Tray menu.
-- 🔄 **Smart Grace-Period Debouncing:** Configurable delay (default `2.0s`) prevents abrupt preset flapping during track changes, video buffering, or brief pauses in conversation.
+- 🎤 **Automatic Voice Meeting Detection (Top Priority):** Immediately switches to **`Compressed-Max`** or **`Meeting-Voice-Clear`** (plus optional **`Meeting-Mic-Clean`** input preset) whenever a confirmed voice meeting or microphone stream is active.
+- 🔕 **Alert & Notification Sound Filtering:** Uses whole-word regex matching and a configurable **Meeting Onset Delay (`meeting_onset_seconds`, default `3.5s`)** so brief chat notification chimes (Teams, Slack, Discord) or WebRTC microphone probes never falsely trigger meeting mode.
+- ⏸️ **Single-Shot Auto-Pause Media During Meetings (Configurable):** Automatically pauses any active MPRIS2 media applications (YouTube/browsers, Spotify, VLC, mpv, Elisa, etc.) once when a meeting is confirmed—allowing you to manually resume playback during a call if desired. Can be toggled on/off in Settings or directly from the System Tray menu.
+- 🔔 **Desktop Notifications Quick-Toggle:** Enable or silence desktop popup notifications (`show_notifications`) anytime from the main window header (`🔔 Notifications: ON` / `🔕 Notifications: OFF`), the Settings tab, or the System Tray menu.
+- 🔄 **Smart Grace-Period Debouncing:** Configurable delay (default `2.0s`, clamped safely to `0.0..=60.0s`) prevents abrupt preset flapping during track changes, video buffering, or brief pauses in conversation.
 - 🦀 **Dual Architecture (Rust + Python/Qt6):**
-  - **Native Rust CLI & Daemon (`easyeffects-auto-preset`):** Memory-safe, zero-overhead background engine consuming **<4MB RSS** and ~0% CPU.
-  - **PyQt6 Settings & System Tray Manager (`python/easyeffects_auto_preset.py`):** Full graphical settings dialog, live PipeWire stream inspector table, one-click preset testing, and tray quick-override menu.
+  - **Native Rust CLI & Daemon (`easyeffects-auto-preset` / `easyeffects-auto-preset-daemon`):** Memory-safe, zero-overhead background engine consuming **<4MB RSS** and ~0% CPU with automatic `config.json` hot-reload.
+  - **PyQt6 Settings & System Tray Manager (`python/easyeffects_auto_preset.py` / `easyeffects-auto-preset-gui`):** Full graphical settings dialog, live PipeWire stream inspector table, one-click preset testing, and tray quick-override menu.
 - 🎨 **Dynamic System Tray Status Badges:**
   - 🔵 **`MED` (Blue Badge):** YouTube, music, movie, or video playback active
   - 🟢 **`MTG` (Green Badge):** Voice meeting / call active
   - ⚪ **`DEF` (Slate Badge):** System idle / default preset
   - 🔴 **`OFF` (Red Badge):** Auto-switching paused
-- 🔔 **Built-in Update Checker:** Automatic startup update checks and manual one-click update checks via the GUI, system tray menu (`Check for Updates...`), and CLI (`--check-update` / `-u`) against GitHub Releases.
+- 🔐 **SHA-256 Verified Update Checker & Self-Updater:** Automatic startup/6-hour update checks and one-click in-app or CLI self-updating (`--self-update`) with **mandatory SHA-256 checksum verification** and GitHub release URL allowlisting.
 - 📦 **Packaged Meeting-Voice & Media Presets:** Bundles all 8 custom EasyEffects presets directly inside the application. Offers to install them on first launch, and allows installing or restoring them anytime later from the GUI (**`📦 Install / Restore Bundled Presets...`**), the System Tray menu, or the CLI (`--install-presets`).
 - 🩺 **System & Dependency Checker:** Automatically detects if **EasyEffects** (native or Flatpak), **`pactl`** (PipeWire/PulseAudio CLI), **PipeWire**, or required **LV2/RNNoise DSP plugins** are missing, shows distro-specific fix commands (`pacman`, `apt`, `dnf`, `zypper`, `flatpak`), and offers one-click package installation.
 - 💾 **Unsaved Changes Protection:** Tracks UI edits in real time and prompts to **Save**, **Discard**, or **Cancel** before minimizing to the tray, closing the window, or quitting.
-- 📦 **Native & Flatpak EasyEffects Support:** Automatically detects whether EasyEffects is installed natively (`easyeffects`) or via Flatpak (`com.github.wwmm.easyeffects`).
+- 🌐 **Native, Flatpak & Multi-Locale Support:** Automatically detects native or Flatpak EasyEffects (`com.github.wwmm.easyeffects`), supports running inside a Flatpak sandbox via `flatpak-spawn --host`, and parses `pactl -f json` output independent of system locale.
 
 ---
 
@@ -122,7 +125,7 @@ chmod +x presets/install-presets.sh
 
 ---
 
-## 🚀 Building & Usage
+## 🚀 Building, Testing & Usage
 
 ### Option 1: Native Rust CLI & Daemon
 
@@ -148,6 +151,9 @@ cargo build --release
 # Check GitHub Releases for a newer version
 ./target/release/easyeffects-auto-preset --check-update
 
+# Download, verify SHA-256 checksum, and install the latest GitHub Release
+./target/release/easyeffects-auto-preset --self-update
+
 # Run the background auto-switching daemon
 ./target/release/easyeffects-auto-preset --daemon
 ```
@@ -161,14 +167,19 @@ python3 python/easyeffects_auto_preset.py
 # Launch minimized directly to the system tray
 python3 python/easyeffects_auto_preset.py --minimized
 
+# Print current status or list available presets from the CLI
+python3 python/easyeffects_auto_preset.py --status
+python3 python/easyeffects_auto_preset.py --list-presets
+
 # Install all 8 bundled presets into EasyEffects from the CLI
 python3 python/easyeffects_auto_preset.py --install-presets
 
 # Check if EasyEffects and required packages are installed
 python3 python/easyeffects_auto_preset.py --check-deps
 
-# Check for updates from the CLI
+# Check for updates or self-update (SHA-256 verified) from the CLI
 python3 python/easyeffects_auto_preset.py --check-update
+python3 python/easyeffects_auto_preset.py --self-update
 ```
 
 ### Option 3: Systemd User Service (Autostart on Login)
@@ -178,6 +189,18 @@ mkdir -p ~/.config/systemd/user/
 cp systemd/easyeffects-auto-preset.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now easyeffects-auto-preset.service
+```
+
+### Running the Test Suite
+
+```bash
+# Format check, strict Clippy lints, and Rust unit tests
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+
+# Headless Python & PyQt6 unit/integration tests
+QT_QPA_PLATFORM=offscreen pytest -v tests
 ```
 
 ---
@@ -220,12 +243,14 @@ Interactive multi-project release and sync scripts are located in the parent wor
   "meeting_mic_preset": "Meeting-Mic-Clean",
   "apply_mic_preset": false,
   "debounce_seconds": 2.0,
+  "meeting_onset_seconds": 3.5,
   "check_interval_seconds": 1.0,
   "detect_microphone": true,
   "detect_communication_role": true,
   "detect_meeting_apps": true,
   "detect_youtube": true,
   "detect_media_apps": true,
+  "pause_media_in_meetings": true,
   "show_notifications": true,
   "minimize_on_startup": true,
   "check_updates_on_startup": true
