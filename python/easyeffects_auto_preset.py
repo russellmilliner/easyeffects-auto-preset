@@ -13,14 +13,17 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -67,17 +70,22 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-CONFIG_DIR = Path.home() / ".config" / "easyeffects-auto-preset"
+_XDG_CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+_XDG_DATA_HOME = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
+
+CONFIG_DIR = _XDG_CONFIG_HOME / "easyeffects-auto-preset"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 PID_FILE = CONFIG_DIR / "instance.pid"
 APP_ICON_FILE = CONFIG_DIR / "app-icon.png"
-AUTOSTART_FILE = Path.home() / ".config" / "autostart" / "easyeffects-auto-preset.desktop"
-APP_DESKTOP_FILE = Path.home() / ".local" / "share" / "applications" / "easyeffects-auto-preset.desktop"
-USER_SHARED_PRESETS_DIR = Path.home() / ".local" / "share" / "easyeffects-auto-preset" / "presets"
+AUTOSTART_FILE = _XDG_CONFIG_HOME / "autostart" / "easyeffects-auto-preset.desktop"
+APP_DESKTOP_FILE = _XDG_DATA_HOME / "applications" / "easyeffects-auto-preset.desktop"
+USER_SHARED_PRESETS_DIR = _XDG_DATA_HOME / "easyeffects-auto-preset" / "presets"
 
-APP_VERSION = "0.5.2"
+APP_VERSION = "0.5.3"
 GITHUB_RELEASES_API_URL = "https://api.github.com/repos/russellmilliner/easyeffects-auto-preset/releases/latest"
 GITHUB_RELEASES_PAGE_URL = "https://github.com/russellmilliner/easyeffects-auto-preset/releases"
+ALLOWED_DOWNLOAD_PREFIX = "https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/"
+ALLOWED_RELEASE_URL_PREFIX = "https://github.com/russellmilliner/easyeffects-auto-preset/releases"
 
 DEFAULT_CONFIG = {
     "enabled": True,
@@ -108,7 +116,7 @@ KNOWN_MEETING_BINARIES = {
 
 MEETING_KEYWORDS = [
     "meet.google.com", "google meet", "zoom meeting", "teams call",
-    "slack huddle", "discord call", "webex meeting", "gotomeeting", "chime",
+    "slack huddle", "discord call", "webex meeting", "gotomeeting", "amazon chime", "chime",
 ]
 
 ALERT_ROLES = {"event", "notification", "alert", "bell", "ringtone", "filter", "test"}
@@ -118,7 +126,6 @@ ALERT_KEYWORDS = (
     "alert",
     "ringtone",
     "ringer",
-    "chime",
     "ping",
     "ding",
     "bell",
@@ -129,6 +136,11 @@ ALERT_KEYWORDS = (
     "message-new",
     "call-incoming",
     "incoming call",
+)
+
+_ALERT_KEYWORD_REGEX = re.compile(
+    r"(?<![a-z0-9])(?:" + "|".join(re.escape(kw) for kw in ALERT_KEYWORDS) + r")(?![a-z0-9])",
+    re.IGNORECASE,
 )
 
 KNOWN_MEDIA_BINARIES = {
@@ -720,13 +732,43 @@ def detect_linux_distro() -> dict[str, str]:
     return info
 
 
+def in_flatpak_sandbox() -> bool:
+    """Return True when running inside a Flatpak sandbox."""
+    return Path("/.flatpak-info").exists() or bool(os.environ.get("FLATPAK_ID"))
+
+
+def _host_or_local_cmd(args: list[str]) -> list[str]:
+    """Prefix command with flatpak-spawn --host if running inside a Flatpak sandbox."""
+    if in_flatpak_sandbox() and shutil.which("flatpak-spawn"):
+        return ["flatpak-spawn", "--host"] + args
+    return args
+
+
+def _has_host_or_local_binary(bin_name: str) -> bool:
+    """Check if binary exists locally or on the host when running inside Flatpak."""
+    if shutil.which(bin_name) is not None:
+        return True
+    if in_flatpak_sandbox() and shutil.which("flatpak-spawn"):
+        try:
+            res = subprocess.run(
+                ["flatpak-spawn", "--host", "sh", "-c", f"command -v {shlex.quote(bin_name)}"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            return res.returncode == 0
+        except Exception:
+            return False
+    return False
+
+
 def is_flatpak_easyeffects_installed() -> bool:
     """Return True if com.github.wwmm.easyeffects is installed in Flatpak."""
-    if not shutil.which("flatpak"):
+    if not _has_host_or_local_binary("flatpak"):
         return False
     try:
         res = subprocess.run(
-            ["flatpak", "info", "com.github.wwmm.easyeffects"],
+            _host_or_local_cmd(["flatpak", "info", "com.github.wwmm.easyeffects"]),
             capture_output=True,
             text=True,
             timeout=4,
@@ -749,12 +791,16 @@ def check_system_dependencies() -> dict:
     distro = detect_linux_distro()
     pkg_mgr = distro["pkg_mgr"]
 
-    native_ee = shutil.which("easyeffects") is not None
+    native_ee = _has_host_or_local_binary("easyeffects")
     flatpak_ee = is_flatpak_easyeffects_installed()
     ee_installed = native_ee or flatpak_ee
 
-    pactl_installed = shutil.which("pactl") is not None
-    pipewire_installed = shutil.which("pw-cli") is not None or shutil.which("pipewire") is not None
+    pactl_installed = shutil.which("pactl") is not None or _has_host_or_local_binary("pactl")
+    pipewire_installed = (
+        shutil.which("pw-cli") is not None
+        or shutil.which("pipewire") is not None
+        or _has_host_or_local_binary("pipewire")
+    )
 
     # Check if native EasyEffects has required LV2/LADSPA DSP plugins (Flatpak EasyEffects bundles its own)
     lv2_dirs = [Path("/usr/lib/lv2"), Path("/usr/lib64/lv2"), Path("/usr/local/lib/lv2")]
@@ -886,11 +932,35 @@ def check_system_dependencies() -> dict:
 
 
 def launch_package_installation(cmd_str: str, parent: QWidget | None = None) -> bool:
-    """Run an installation command using a terminal emulator or pkexec."""
-    # Strip leading 'sudo ' if we use pkexec without terminal
+    """Run an installation command using a terminal emulator or pkexec without shell injection."""
     clean_cmd = cmd_str.strip()
+    if not clean_cmd:
+        return False
 
-    # Prefer opening an interactive terminal emulator so the user can see package manager progress
+    # Parse chains of commands separated by '&&' into safe argv lists
+    sub_commands: list[list[str]] = []
+    for part in clean_cmd.split("&&"):
+        part_str = part.strip()
+        if not part_str:
+            continue
+        try:
+            argv = shlex.split(part_str)
+        except ValueError:
+            return False
+        if argv:
+            sub_commands.append(argv)
+
+    if not sub_commands:
+        return False
+
+    # Safe quoted representation for terminal emulators that require a command string
+    safe_joined = " && ".join(shlex.join(argv) for argv in sub_commands)
+    interactive_script = (
+        f"echo '==> Running: {shlex.quote(safe_joined)}'; "
+        f"{safe_joined}; "
+        "echo ''; echo '==> Finished! Press Enter to close this window...'; read -r _"
+    )
+
     terminals = [
         ("konsole", ["konsole", "-e", "bash", "-c"]),
         ("yakuake", None),
@@ -902,12 +972,6 @@ def launch_package_installation(cmd_str: str, parent: QWidget | None = None) -> 
         ("xterm", ["xterm", "-e", "bash", "-c"]),
     ]
 
-    interactive_script = (
-        f"echo '==> Running: {clean_cmd}'; "
-        f"{clean_cmd}; "
-        "echo ''; echo '==> Finished! Press Enter to close this window...'; read -r _"
-    )
-
     for term_bin, term_prefix in terminals:
         if term_prefix and shutil.which(term_bin):
             try:
@@ -916,21 +980,23 @@ def launch_package_installation(cmd_str: str, parent: QWidget | None = None) -> 
             except Exception:
                 pass
 
-    # Fallback: if it's a flatpak command or pkexec is available
-    if clean_cmd.startswith("flatpak "):
+    # Fallback: direct argv execution without a shell for flatpak or pkexec
+    first_argv = sub_commands[0]
+    if first_argv[0] == "flatpak" and len(sub_commands) == 1:
         try:
-            subprocess.Popen(["bash", "-c", clean_cmd])
+            subprocess.Popen(_host_or_local_cmd(first_argv))
             return True
         except Exception:
             pass
 
-    if shutil.which("pkexec"):
-        pk_cmd = re.sub(r"^sudo\s+", "", clean_cmd)
-        try:
-            subprocess.Popen(["pkexec", "bash", "-c", pk_cmd])
-            return True
-        except Exception:
-            pass
+    if shutil.which("pkexec") and len(sub_commands) == 1:
+        pk_argv = first_argv[1:] if first_argv[0] == "sudo" else first_argv
+        if pk_argv:
+            try:
+                subprocess.Popen(["pkexec"] + pk_argv)
+                return True
+            except Exception:
+                pass
 
     if parent:
         QMessageBox.information(
@@ -1179,11 +1245,17 @@ def build_tray_icon(mode: str = "default", enabled: bool = True, size: int = 64)
 def parse_semver(version: str) -> tuple[int, int, int] | None:
     """Parse a semantic version string (e.g., 'v0.1.0' or '0.1.0') into a (major, minor, patch) tuple."""
     cleaned = version.strip().lstrip("vV").split("-", 1)[0].split("+", 1)[0]
+    if not cleaned:
+        return None
     parts = cleaned.split(".")
+    if len(parts) > 3:
+        return None
     try:
         major = int(parts[0])
         minor = int(parts[1]) if len(parts) > 1 else 0
         patch = int(parts[2]) if len(parts) > 2 else 0
+        if major < 0 or minor < 0 or patch < 0:
+            return None
         return (major, minor, patch)
     except (ValueError, IndexError):
         return None
@@ -1194,9 +1266,51 @@ def is_newer_version(current: str, latest: str) -> bool:
     lat_t = parse_semver(latest)
     if cur_t is not None and lat_t is not None:
         return lat_t > cur_t
-    cur_c = current.strip().lstrip("vV")
-    lat_c = latest.strip().lstrip("vV")
-    return bool(lat_c) and lat_c != cur_c
+    return False
+
+
+def is_allowed_download_url(url: str) -> bool:
+    return url.strip().startswith(ALLOWED_DOWNLOAD_PREFIX)
+
+
+def is_allowed_release_url(url: str) -> bool:
+    return url.strip().startswith(ALLOWED_RELEASE_URL_PREFIX)
+
+
+def extract_expected_sha256(sha256_text: str) -> str | None:
+    """Extract a 64-character lowercase hex SHA-256 digest from a .sha256 file."""
+    token = sha256_text.strip().split()[0].lower() if sha256_text.strip() else ""
+    if len(token) == 64 and all(c in "0123456789abcdef" for c in token):
+        return token
+    return None
+
+
+def verify_file_sha256(file_path: Path, expected_sha256_text: str) -> tuple[bool, str]:
+    """Verify the SHA-256 digest of a downloaded file against expected .sha256 text."""
+    expected = extract_expected_sha256(expected_sha256_text)
+    if not expected:
+        return False, "Invalid or missing SHA-256 checksum content"
+    try:
+        actual = hashlib.sha256(file_path.read_bytes()).hexdigest().lower()
+    except Exception as exc:
+        return False, f"Failed to hash {file_path}: {exc}"
+    if actual != expected:
+        return False, f"SHA-256 checksum mismatch for {file_path.name} (expected {expected}, got {actual})"
+    return True, actual
+
+
+def _fetch_sha256_text(sha256_url: str, timeout: float = 15.0) -> tuple[bool, str]:
+    if not is_allowed_download_url(sha256_url):
+        return False, f"Rejected untrusted checksum URL: {sha256_url}"
+    try:
+        req = urllib.request.Request(
+            sha256_url,
+            headers={"User-Agent": f"EasyEffectsAutoPreset/{APP_VERSION}"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return True, resp.read().decode("utf-8", errors="replace")
+    except Exception as exc:
+        return False, f"Failed to download SHA-256 checksum from {sha256_url}: {exc}"
 
 
 def check_for_updates(current_version: str = APP_VERSION, timeout: float = 8.0) -> dict:
@@ -1217,18 +1331,27 @@ def check_for_updates(current_version: str = APP_VERSION, timeout: float = 8.0) 
         latest_tag = f"v{latest_clean}"
         current_tag = f"v{current_clean}"
         update_available = is_newer_version(current_clean, latest_clean)
-        release_url = str(payload.get("html_url", "")).strip() or GITHUB_RELEASES_PAGE_URL
+        raw_release_url = str(payload.get("html_url", "")).strip()
+        release_url = raw_release_url if is_allowed_release_url(raw_release_url) else GITHUB_RELEASES_PAGE_URL
         release_notes = str(payload.get("body", "") or "")
 
         flatpak_url = ""
+        flatpak_sha256_url = ""
         tarball_url = ""
+        tarball_sha256_url = ""
         binary_url = ""
         for asset in payload.get("assets", []) or []:
             name = str(asset.get("name", "")).lower()
             dl_url = str(asset.get("browser_download_url", "")).strip()
-            if not dl_url or name.endswith(".sha256"):
+            if not dl_url or not is_allowed_download_url(dl_url):
                 continue
-            if name.endswith(".flatpak"):
+            if name.endswith(".flatpak.sha256"):
+                flatpak_sha256_url = dl_url
+            elif name.endswith(".tar.gz.sha256"):
+                tarball_sha256_url = dl_url
+            elif name.endswith(".sha256"):
+                continue
+            elif name.endswith(".flatpak"):
                 flatpak_url = dl_url
             elif name.endswith(".tar.gz"):
                 tarball_url = dl_url
@@ -1251,7 +1374,9 @@ def check_for_updates(current_version: str = APP_VERSION, timeout: float = 8.0) 
             "release_url": release_url,
             "download_url": download_url,
             "flatpak_download_url": flatpak_url,
+            "flatpak_sha256_url": flatpak_sha256_url,
             "tarball_download_url": tarball_url,
+            "tarball_sha256_url": tarball_sha256_url,
             "release_notes": release_notes,
             "message": message,
         }
@@ -1265,10 +1390,20 @@ def check_for_updates(current_version: str = APP_VERSION, timeout: float = 8.0) 
             "release_url": GITHUB_RELEASES_PAGE_URL,
             "download_url": GITHUB_RELEASES_PAGE_URL,
             "flatpak_download_url": "",
+            "flatpak_sha256_url": "",
             "tarball_download_url": "",
+            "tarball_sha256_url": "",
             "release_notes": "",
             "message": f"Update check failed: {exc}",
         }
+
+
+def _atomic_copy_executable(src: Path, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp_dest = dest.parent / f".{dest.name}.tmp.{os.getpid()}"
+    shutil.copy2(src, tmp_dest)
+    tmp_dest.chmod(0o755)
+    os.replace(tmp_dest, dest)
 
 
 def install_update_from_github(
@@ -1276,10 +1411,10 @@ def install_update_from_github(
     flatpak_url: str = "",
     latest_version: str = "",
     timeout: float = 120.0,
+    tarball_sha256_url: str = "",
+    flatpak_sha256_url: str = "",
 ) -> dict:
-    """Download and install the latest release of EasyEffects Auto Preset from GitHub Releases."""
-    import tempfile
-
+    """Download, verify SHA-256 checksum, and install the latest release from GitHub Releases."""
     try:
         if not tarball_url and not flatpak_url:
             info = check_for_updates(APP_VERSION)
@@ -1288,12 +1423,21 @@ def install_update_from_github(
             if not info.get("update_available"):
                 return {"ok": True, "updated": False, "message": f"Already up to date ({info.get('current_version')})"}
             tarball_url = info.get("tarball_download_url", "")
+            tarball_sha256_url = info.get("tarball_sha256_url", "")
             flatpak_url = info.get("flatpak_download_url", "")
+            flatpak_sha256_url = info.get("flatpak_sha256_url", "")
             latest_version = info.get("latest_version", "")
 
-        in_flatpak = Path("/.flatpak-info").exists() or bool(os.environ.get("FLATPAK_ID"))
-        if in_flatpak and flatpak_url:
-            with tempfile.TemporaryDirectory(prefix="ee-auto-preset-fp-") as tmpd:
+        if in_flatpak_sandbox() and flatpak_url:
+            if not is_allowed_download_url(flatpak_url):
+                return {"ok": False, "message": f"Rejected untrusted Flatpak URL: {flatpak_url}"}
+            sha_url = flatpak_sha256_url or f"{flatpak_url}.sha256"
+            ok_sha, sha_text = _fetch_sha256_text(sha_url, timeout=timeout)
+            if not ok_sha:
+                return {"ok": False, "message": sha_text}
+
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(dir=CONFIG_DIR, prefix="fp-upd-") as tmpd:
                 bundle_path = Path(tmpd) / f"easyeffects-auto-preset-{latest_version or 'latest'}.flatpak"
                 req = urllib.request.Request(
                     flatpak_url,
@@ -1301,6 +1445,11 @@ def install_update_from_github(
                 )
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     bundle_path.write_bytes(resp.read())
+
+                verified, verify_msg = verify_file_sha256(bundle_path, sha_text)
+                if not verified:
+                    return {"ok": False, "message": verify_msg}
+
                 res = subprocess.run(
                     ["flatpak-spawn", "--host", "flatpak", "install", "--user", "-y", "--reinstall", str(bundle_path)],
                     capture_output=True,
@@ -1313,11 +1462,18 @@ def install_update_from_github(
                     "ok": True,
                     "updated": True,
                     "latest_version": latest_version,
-                    "message": f"Installed EasyEffects Auto Preset {latest_version} Flatpak successfully.",
+                    "message": f"Installed EasyEffects Auto Preset {latest_version} Flatpak successfully (SHA-256 verified).",
                 }
 
         if not tarball_url:
             return {"ok": False, "message": "No Linux release archive (.tar.gz) found on GitHub Releases."}
+        if not is_allowed_download_url(tarball_url):
+            return {"ok": False, "message": f"Rejected untrusted tarball URL: {tarball_url}"}
+
+        sha_url = tarball_sha256_url or f"{tarball_url}.sha256"
+        ok_sha, sha_text = _fetch_sha256_text(sha_url, timeout=timeout)
+        if not ok_sha:
+            return {"ok": False, "message": sha_text}
 
         with tempfile.TemporaryDirectory(prefix="ee-auto-preset-upd-") as tmpd:
             tmp_path = Path(tmpd)
@@ -1328,6 +1484,10 @@ def install_update_from_github(
             )
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 archive_path.write_bytes(resp.read())
+
+            verified, verify_msg = verify_file_sha256(archive_path, sha_text)
+            if not verified:
+                return {"ok": False, "message": verify_msg}
 
             untar = subprocess.run(
                 ["tar", "-xzf", str(archive_path), "-C", str(tmp_path)],
@@ -1346,15 +1506,12 @@ def install_update_from_github(
                 if child.is_dir():
                     py_src = child / "python" / "easyeffects_auto_preset.py"
                     if py_src.is_file():
-                        dest_py = local_bin / "easyeffects-auto-preset"
-                        shutil.copy2(py_src, dest_py)
-                        dest_py.chmod(0o755)
+                        _atomic_copy_executable(py_src, local_bin / "easyeffects-auto-preset")
+                        _atomic_copy_executable(py_src, local_bin / "easyeffects-auto-preset-gui")
                         updated_script = True
                     rust_src = child / "easyeffects-auto-preset"
                     if rust_src.is_file():
-                        dest_rust = local_bin / "easyeffects-auto-preset-daemon"
-                        shutil.copy2(rust_src, dest_rust)
-                        dest_rust.chmod(0o755)
+                        _atomic_copy_executable(rust_src, local_bin / "easyeffects-auto-preset-daemon")
 
             if not updated_script:
                 return {"ok": False, "message": "Extracted archive did not contain python/easyeffects_auto_preset.py"}
@@ -1363,7 +1520,7 @@ def install_update_from_github(
             "ok": True,
             "updated": True,
             "latest_version": latest_version,
-            "message": f"Updated ~/.local/bin/easyeffects-auto-preset to {latest_version}.",
+            "message": f"Updated ~/.local/bin/easyeffects-auto-preset to {latest_version} (SHA-256 verified).",
         }
     except Exception as exc:
         return {"ok": False, "message": f"Update installation failed: {exc}"}
@@ -1409,6 +1566,24 @@ class UpdateInstallWorker(QThread):
         self.install_finished.emit(res)
 
 
+def _clamp_float(val: object, default: float, min_val: float, max_val: float) -> float:
+    try:
+        f = float(val)  # type: ignore[arg-type]
+        if f != f or f == float("inf") or f == float("-inf"):
+            return default
+        return max(min_val, min(max_val, f))
+    except (ValueError, TypeError):
+        return default
+
+
+def sanitize_config(cfg: dict) -> dict:
+    """Validate and clamp numeric configuration parameters."""
+    cfg["debounce_seconds"] = _clamp_float(cfg.get("debounce_seconds", 2.0), 2.0, 0.0, 60.0)
+    cfg["meeting_onset_seconds"] = _clamp_float(cfg.get("meeting_onset_seconds", 3.5), 3.5, 0.0, 60.0)
+    cfg["check_interval_seconds"] = _clamp_float(cfg.get("check_interval_seconds", 1.0), 1.0, 0.25, 30.0)
+    return cfg
+
+
 def load_config() -> dict:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     cfg = DEFAULT_CONFIG.copy()
@@ -1416,26 +1591,54 @@ def load_config() -> dict:
         try:
             with CONFIG_FILE.open("r", encoding="utf-8") as f:
                 loaded = json.load(f)
-                cfg.update(loaded)
+                if isinstance(loaded, dict):
+                    cfg.update(loaded)
         except Exception as e:
             print(f"Error loading config: {e}", file=sys.stderr)
-    return cfg
+    return sanitize_config(cfg)
 
 
 def save_config(cfg: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    sanitize_config(cfg)
+    tmp_file = CONFIG_DIR / f".config.json.tmp.{os.getpid()}"
     try:
-        with CONFIG_FILE.open("w", encoding="utf-8") as f:
+        with tmp_file.open("w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2)
+            f.write("\n")
+        os.replace(tmp_file, CONFIG_FILE)
     except Exception as e:
+        tmp_file.unlink(missing_ok=True)
         print(f"Error saving config: {e}", file=sys.stderr)
 
 
+_CACHED_EASYEFFECTS_CMD: list[str] | None = None
+
+
 def get_easyeffects_cmd() -> list[str]:
-    """Find the best command to invoke EasyEffects CLI."""
-    if shutil.which("easyeffects"):
-        return ["easyeffects"]
-    return ["flatpak", "run", "--command=easyeffects", "com.github.wwmm.easyeffects"]
+    """Find and cache the best command to invoke EasyEffects CLI."""
+    global _CACHED_EASYEFFECTS_CMD
+    if _CACHED_EASYEFFECTS_CMD is not None:
+        return list(_CACHED_EASYEFFECTS_CMD)
+
+    if in_flatpak_sandbox():
+        if _has_host_or_local_binary("easyeffects"):
+            _CACHED_EASYEFFECTS_CMD = ["flatpak-spawn", "--host", "easyeffects"]
+        else:
+            _CACHED_EASYEFFECTS_CMD = [
+                "flatpak-spawn",
+                "--host",
+                "flatpak",
+                "run",
+                "--command=easyeffects",
+                "com.github.wwmm.easyeffects",
+            ]
+    elif shutil.which("easyeffects"):
+        _CACHED_EASYEFFECTS_CMD = ["easyeffects"]
+    else:
+        _CACHED_EASYEFFECTS_CMD = ["flatpak", "run", "--command=easyeffects", "com.github.wwmm.easyeffects"]
+
+    return list(_CACHED_EASYEFFECTS_CMD)
 
 
 def is_service_enabled() -> bool:
@@ -1555,6 +1758,82 @@ def parse_pactl_blocks(raw_output: str, block_prefix: str) -> list[dict[str, str
     return blocks
 
 
+def parse_pactl_json(raw_output: str) -> list[dict[str, str]] | None:
+    """Parse locale-independent JSON output from `pactl -f json list <stream_type>`."""
+    try:
+        items = json.loads(raw_output)
+    except Exception:
+        return None
+    if not isinstance(items, list):
+        return None
+
+    blocks: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        block: dict[str, str] = {}
+        if "index" in item:
+            block["id"] = str(item["index"])
+        if isinstance(item.get("corked"), bool):
+            block["Corked"] = "yes" if item["corked"] else "no"
+        if isinstance(item.get("mute"), bool):
+            block["Mute"] = "yes" if item["mute"] else "no"
+        props = item.get("properties")
+        if isinstance(props, dict):
+            for k, v in props.items():
+                if v is not None:
+                    block[str(k)] = str(v)
+        blocks.append(block)
+    return blocks
+
+
+def query_pactl_streams(stream_type: str, block_prefix: str) -> list[dict[str, str]]:
+    """Query `pactl` using locale-independent JSON output first, falling back to `LC_ALL=C pactl list`."""
+    env = os.environ.copy()
+    env["LC_ALL"] = "C"
+    pactl_cmd = ["pactl"] if shutil.which("pactl") else _host_or_local_cmd(["pactl"])
+
+    try:
+        json_res = subprocess.run(
+            pactl_cmd + ["-f", "json", "list", stream_type],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            env=env,
+        )
+        if json_res.returncode == 0 and json_res.stdout.strip():
+            parsed = parse_pactl_json(json_res.stdout)
+            if parsed is not None:
+                return parsed
+    except Exception:
+        pass
+
+    try:
+        txt_res = subprocess.run(
+            pactl_cmd + ["list", stream_type],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            env=env,
+        )
+        return parse_pactl_blocks(txt_res.stdout, block_prefix)
+    except Exception:
+        return []
+
+
+def _run_busctl_cmd(args: list[str], timeout: float = 2.0) -> subprocess.CompletedProcess[str] | None:
+    if shutil.which("busctl"):
+        cmd = ["busctl"] + args
+    elif in_flatpak_sandbox() and shutil.which("flatpak-spawn"):
+        cmd = ["flatpak-spawn", "--host", "busctl"] + args
+    else:
+        return None
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except Exception:
+        return None
+
+
 def pause_active_media_players() -> list[str]:
     """Pause any currently playing MPRIS2 media applications (browsers, Spotify, VLC, mpv, Elisa, etc.).
 
@@ -1564,20 +1843,12 @@ def pause_active_media_players() -> list[str]:
     paused: list[str] = []
     services: list[str] = []
 
-    if shutil.which("busctl"):
-        try:
-            res = subprocess.run(
-                ["busctl", "--user", "list", "--no-legend"],
-                capture_output=True,
-                text=True,
-                timeout=3,
-            )
-            for line in res.stdout.splitlines():
-                parts = line.split()
-                if parts and parts[0].startswith("org.mpris.MediaPlayer2."):
-                    services.append(parts[0])
-        except Exception:
-            pass
+    list_res = _run_busctl_cmd(["--user", "list", "--no-legend"], timeout=3.0)
+    if list_res is not None and list_res.returncode == 0:
+        for line in list_res.stdout.splitlines():
+            parts = line.split()
+            if parts and parts[0].startswith("org.mpris.MediaPlayer2."):
+                services.append(parts[0])
     elif shutil.which("qdbus6"):
         try:
             res = subprocess.run(["qdbus6"], capture_output=True, text=True, timeout=3)
@@ -1594,9 +1865,8 @@ def pause_active_media_players() -> list[str]:
             continue
 
         try:
-            st_res = subprocess.run(
+            st_res = _run_busctl_cmd(
                 [
-                    "busctl",
                     "--user",
                     "get-property",
                     svc,
@@ -1604,16 +1874,13 @@ def pause_active_media_players() -> list[str]:
                     "org.mpris.MediaPlayer2.Player",
                     "PlaybackStatus",
                 ],
-                capture_output=True,
-                text=True,
-                timeout=2,
+                timeout=2.0,
             )
-            if '"Playing"' not in st_res.stdout:
+            if st_res is None or '"Playing"' not in st_res.stdout:
                 continue
 
-            meta_res = subprocess.run(
+            meta_res = _run_busctl_cmd(
                 [
-                    "busctl",
                     "--user",
                     "get-property",
                     svc,
@@ -1621,18 +1888,15 @@ def pause_active_media_players() -> list[str]:
                     "org.mpris.MediaPlayer2.Player",
                     "Metadata",
                 ],
-                capture_output=True,
-                text=True,
-                timeout=2,
+                timeout=2.0,
             )
-            meta_lower = meta_res.stdout.lower()
+            meta_lower = (meta_res.stdout if meta_res is not None else "").lower()
             if any(kw in meta_lower for kw in MEETING_KEYWORDS):
                 continue
 
             # Send MPRIS2 Pause command
-            pause_res = subprocess.run(
+            pause_res = _run_busctl_cmd(
                 [
-                    "busctl",
                     "--user",
                     "call",
                     svc,
@@ -1640,11 +1904,9 @@ def pause_active_media_players() -> list[str]:
                     "org.mpris.MediaPlayer2.Player",
                     "Pause",
                 ],
-                capture_output=True,
-                text=True,
-                timeout=2,
+                timeout=2.0,
             )
-            if pause_res.returncode != 0 and shutil.which("dbus-send"):
+            if (pause_res is None or pause_res.returncode != 0) and shutil.which("dbus-send"):
                 subprocess.run(
                     [
                         "dbus-send",
@@ -1990,7 +2252,7 @@ def is_alert_or_notification_stream(block: dict[str, str]) -> bool:
     node = block.get("node.name", "").lower()
     filename = block.get("media.filename", "").lower()
     combined = f"{media} {node} {filename}"
-    return any(kw in combined for kw in ALERT_KEYWORDS)
+    return bool(_ALERT_KEYWORD_REGEX.search(combined))
 
 
 class AudioMonitorWorker(QObject):
@@ -2002,16 +2264,17 @@ class AudioMonitorWorker(QObject):
 
     def __init__(self, config: dict):
         super().__init__()
-        self.config = config
+        self.config = sanitize_config(config)
         self._running = True
         self.current_mode = "unknown"  # "meeting", "youtube", "default"
         self.last_preset = ""
         self._meeting_candidate_since = 0.0
         self._meeting_lost_at = 0.0
         self._youtube_lost_at = 0.0
+        self._media_paused_for_meeting = False
 
     def update_config(self, new_config: dict):
-        self.config = new_config
+        self.config = sanitize_config(new_config)
 
     def stop(self):
         self._running = False
@@ -2031,11 +2294,7 @@ class AudioMonitorWorker(QObject):
         stream_items: list[dict] = []
 
         # 1. Inspect source outputs (Microphone recording)
-        try:
-            src_res = subprocess.run(["pactl", "list", "source-outputs"], capture_output=True, text=True, timeout=3)
-            source_blocks = parse_pactl_blocks(src_res.stdout, "Source Output #")
-        except Exception:
-            source_blocks = []
+        source_blocks = query_pactl_streams("source-outputs", "Source Output #")
 
         for sc in source_blocks:
             corked = sc.get("Corked", sc.get("pulse.corked", "yes")).lower()
@@ -2083,11 +2342,7 @@ class AudioMonitorWorker(QObject):
                 meeting_details = f"Microphone active: {app} ({media or binary})"
 
         # 2. Inspect sink inputs (Playback)
-        try:
-            sink_res = subprocess.run(["pactl", "list", "sink-inputs"], capture_output=True, text=True, timeout=3)
-            sink_blocks = parse_pactl_blocks(sink_res.stdout, "Sink Input #")
-        except Exception:
-            sink_blocks = []
+        sink_blocks = query_pactl_streams("sink-inputs", "Sink Input #")
 
         for sk in sink_blocks:
             corked = sk.get("Corked", sk.get("pulse.corked", "yes")).lower()
@@ -2194,7 +2449,8 @@ class AudioMonitorWorker(QObject):
                     target_mode = "meeting"
                     reason = meet_info or "Voice Meeting Active"
                     self._meeting_lost_at = 0.0
-                    if self.config.get("pause_media_in_meetings", True):
+                    if self.config.get("pause_media_in_meetings", True) and not self._media_paused_for_meeting:
+                        self._media_paused_for_meeting = True
                         paused_players = pause_active_media_players()
                         if paused_players:
                             print(f"Paused media application(s) during meeting: {', '.join(paused_players)}")
@@ -2208,6 +2464,7 @@ class AudioMonitorWorker(QObject):
                             reason = "Meeting (Grace period)"
 
                 if target_mode != "meeting":
+                    self._media_paused_for_meeting = False
                     if youtube_playing:
                         target_mode = "youtube"
                         reason = yt_info or "YouTube Playback"
@@ -2327,6 +2584,14 @@ class MainWindow(QMainWindow):
         banner_text_layout.addWidget(self.status_detail)
         banner_layout.addLayout(banner_text_layout)
         banner_layout.addStretch()
+
+        self.btn_toggle_notify = QPushButton("🔔 Notifications: On", self)
+        self.btn_toggle_notify.setCheckable(True)
+        self.btn_toggle_notify.setChecked(self.config.get("show_notifications", True))
+        self.btn_toggle_notify.setToolTip("Enable or disable desktop notifications when switching presets")
+        self._update_notify_btn_text(self.config.get("show_notifications", True))
+        self.btn_toggle_notify.toggled.connect(self._on_notify_btn_toggled)
+        banner_layout.addWidget(self.btn_toggle_notify)
 
         self.btn_toggle_enable = QPushButton("Auto-Switching: Active", self)
         self.btn_toggle_enable.setCheckable(True)
@@ -2477,9 +2742,10 @@ class MainWindow(QMainWindow):
         vbox_detect.addWidget(self.chk_pause_media)
         layout_presets.addWidget(grp_detect)
 
-        # Timing group
-        grp_timing = QGroupBox("Switching Behavior", tab_presets)
-        timing_layout = QHBoxLayout(grp_timing)
+        # Timing & Notification group
+        grp_timing = QGroupBox("Switching Behavior && Desktop Notifications", tab_presets)
+        timing_vbox = QVBoxLayout(grp_timing)
+        timing_layout = QHBoxLayout()
         timing_layout.addWidget(QLabel("Alert Sound Filter (Min Meeting Duration):"))
         self.spin_meeting_onset = QDoubleSpinBox(grp_timing)
         self.spin_meeting_onset.setRange(0.0, 15.0)
@@ -2497,11 +2763,15 @@ class MainWindow(QMainWindow):
         self.spin_debounce.setSingleStep(0.5)
         self.spin_debounce.setSuffix(" sec")
         timing_layout.addWidget(self.spin_debounce)
-        timing_layout.addSpacing(14)
-
-        self.chk_notify = QCheckBox("Show desktop notification on preset change", grp_timing)
-        timing_layout.addWidget(self.chk_notify)
         timing_layout.addStretch()
+        timing_vbox.addLayout(timing_layout)
+
+        self.chk_notify = QCheckBox(
+            "Show desktop notifications on preset change (and when pausing media for meetings)",
+            grp_timing,
+        )
+        self.chk_notify.toggled.connect(self._on_chk_notify_toggled)
+        timing_vbox.addWidget(self.chk_notify)
         layout_presets.addWidget(grp_timing)
 
         layout_presets.addStretch()
@@ -2854,6 +3124,12 @@ class MainWindow(QMainWindow):
             self.btn_toggle_enable.setChecked(self.config.get("enabled", True))
             self._update_enable_btn_text(self.config.get("enabled", True))
 
+            notify_enabled = bool(self.config.get("show_notifications", True))
+            self.btn_toggle_notify.blockSignals(True)
+            self.btn_toggle_notify.setChecked(notify_enabled)
+            self._update_notify_btn_text(notify_enabled)
+            self.btn_toggle_notify.blockSignals(False)
+
             for combo, key, fallback in (
                 (self.combo_youtube, "youtube_preset", "Crystal more Bass"),
                 (self.combo_meeting, "meeting_preset", "Compressed-Max"),
@@ -2881,7 +3157,7 @@ class MainWindow(QMainWindow):
             self.chk_detect_comm.setChecked(bool(self.config.get("detect_communication_role", True)))
             self.chk_detect_yt.setChecked(bool(self.config.get("detect_youtube", True)))
             self.chk_pause_media.setChecked(bool(self.config.get("pause_media_in_meetings", True)))
-            self.chk_notify.setChecked(bool(self.config.get("show_notifications", True)))
+            self.chk_notify.setChecked(notify_enabled)
             self.chk_updates_startup.setChecked(bool(self.config.get("check_updates_on_startup", True)))
             self.spin_debounce.setValue(round(float(self.config.get("debounce_seconds", 2.0)), 2))
             self.spin_meeting_onset.setValue(round(float(self.config.get("meeting_onset_seconds", 3.5)), 2))
@@ -2894,6 +3170,11 @@ class MainWindow(QMainWindow):
         self.config["enabled"] = self.btn_toggle_enable.isChecked()
         self.config.update(ui_state)
         self.config["detect_media_apps"] = ui_state["detect_youtube"]
+
+        self.btn_toggle_notify.blockSignals(True)
+        self.btn_toggle_notify.setChecked(bool(ui_state["show_notifications"]))
+        self._update_notify_btn_text(bool(ui_state["show_notifications"]))
+        self.btn_toggle_notify.blockSignals(False)
 
         save_config(self.config)
         self.worker.update_config(self.config)
@@ -2914,6 +3195,7 @@ class MainWindow(QMainWindow):
         )
         if hasattr(self, "tray_icon"):
             self.tray_icon.setIcon(build_tray_icon(self.worker.current_mode, checked))
+        self.settings_saved.emit()
 
     def _update_enable_btn_text(self, checked: bool):
         if checked:
@@ -2925,6 +3207,41 @@ class MainWindow(QMainWindow):
             self.btn_toggle_enable.setText("Auto-Switching: Paused")
             self.btn_toggle_enable.setStyleSheet(
                 "background-color: #c62828; color: white; padding: 8px 16px; font-weight: bold; border-radius: 4px;"
+            )
+
+    def _on_notify_btn_toggled(self, checked: bool):
+        self._update_notify_btn_text(checked)
+        self.config["show_notifications"] = checked
+        save_config(self.config)
+        self.worker.update_config(self.config)
+        self._loading_ui = True
+        self.chk_notify.setChecked(checked)
+        self._loading_ui = False
+        self._on_ui_modified()
+        self.settings_saved.emit()
+
+    def _on_chk_notify_toggled(self, checked: bool):
+        self.btn_toggle_notify.blockSignals(True)
+        self.btn_toggle_notify.setChecked(checked)
+        self._update_notify_btn_text(checked)
+        self.btn_toggle_notify.blockSignals(False)
+        if not self._loading_ui:
+            self.config["show_notifications"] = checked
+            save_config(self.config)
+            self.worker.update_config(self.config)
+            self._on_ui_modified()
+            self.settings_saved.emit()
+
+    def _update_notify_btn_text(self, checked: bool):
+        if checked:
+            self.btn_toggle_notify.setText("🔔 Notifications: On")
+            self.btn_toggle_notify.setStyleSheet(
+                "background-color: #1565c0; color: white; padding: 8px 14px; font-weight: bold; border-radius: 4px;"
+            )
+        else:
+            self.btn_toggle_notify.setText("🔕 Notifications: Off")
+            self.btn_toggle_notify.setStyleSheet(
+                "background-color: #546e7a; color: white; padding: 8px 14px; font-weight: bold; border-radius: 4px;"
             )
 
     def _on_autostart_toggled(self, checked: bool):
@@ -3121,7 +3438,11 @@ class MainWindow(QMainWindow):
         self.hide()
         if not self._first_minimize_tip_shown:
             self._first_minimize_tip_shown = True
-            if hasattr(self, "tray_icon") and self.tray_icon.isVisible():
+            if (
+                self.config.get("show_notifications", True)
+                and hasattr(self, "tray_icon")
+                and self.tray_icon.isVisible()
+            ):
                 self.tray_icon.showMessage(
                     "EasyEffects Auto Preset",
                     "Application is minimized to the system tray.",
@@ -3228,6 +3549,12 @@ class TrayManager(QObject):
         self.pause_media_action.triggered.connect(self._on_toggle_pause_media)
         self.menu.addAction(self.pause_media_action)
 
+        self.notifications_action = QAction("Desktop Notifications", self.menu)
+        self.notifications_action.setCheckable(True)
+        self.notifications_action.setChecked(self.config.get("show_notifications", True))
+        self.notifications_action.triggered.connect(self._on_toggle_notifications)
+        self.menu.addAction(self.notifications_action)
+
         # Quick preset override submenu
         self.menu_presets = self.menu.addMenu("Force Preset...")
         self._populate_force_presets()
@@ -3282,7 +3609,8 @@ class TrayManager(QObject):
 
     def _force_preset(self, name: str):
         apply_preset(name)
-        self.tray_icon.showMessage("Preset Forced", f"Applied: {name}", QSystemTrayIcon.MessageIcon.Information, 1500)
+        if self.config.get("show_notifications", True):
+            self.tray_icon.showMessage("Preset Forced", f"Applied: {name}", QSystemTrayIcon.MessageIcon.Information, 1500)
 
     def _on_toggle_enabled(self, checked: bool):
         self.config["enabled"] = checked
@@ -3297,6 +3625,19 @@ class TrayManager(QObject):
         self.worker.update_config(self.config)
         self.window._loading_ui = True
         self.window.chk_pause_media.setChecked(checked)
+        self.window._loading_ui = False
+        self.window._on_ui_modified()
+
+    def _on_toggle_notifications(self, checked: bool):
+        self.config["show_notifications"] = checked
+        save_config(self.config)
+        self.worker.update_config(self.config)
+        self.window._loading_ui = True
+        self.window.chk_notify.setChecked(checked)
+        self.window.btn_toggle_notify.blockSignals(True)
+        self.window.btn_toggle_notify.setChecked(checked)
+        self.window._update_notify_btn_text(checked)
+        self.window.btn_toggle_notify.blockSignals(False)
         self.window._loading_ui = False
         self.window._on_ui_modified()
 
@@ -3331,6 +3672,7 @@ class TrayManager(QObject):
     def _sync_tray_toggles_from_config(self):
         self.toggle_action.setChecked(bool(self.config.get("enabled", True)))
         self.pause_media_action.setChecked(bool(self.config.get("pause_media_in_meetings", True)))
+        self.notifications_action.setChecked(bool(self.config.get("show_notifications", True)))
 
     @pyqtSlot(list)
     def _on_media_paused(self, paused_players: list):
@@ -3381,6 +3723,7 @@ def _is_our_app_process(pid: int) -> bool:
             "easyeffects-auto-preset",
             "easyeffects_auto_preset.py",
             "easyeffects-auto-preset-gui",
+            "easyeffects-auto-preset-daemon",
         }
 
         if exe_base in target_basenames:
@@ -3495,7 +3838,9 @@ def enforce_single_instance() -> int:
             time.sleep(0.05)
 
     try:
-        PID_FILE.write_text(f"{os.getpid()}\n", encoding="utf-8")
+        tmp_pid = CONFIG_DIR / f".instance.pid.tmp.{os.getpid()}"
+        tmp_pid.write_text(f"{os.getpid()}\n", encoding="utf-8")
+        os.replace(tmp_pid, PID_FILE)
     except Exception:
         pass
     atexit.register(_cleanup_pid_file)
@@ -3503,23 +3848,27 @@ def enforce_single_instance() -> int:
 
 
 def ensure_desktop_entries():
-    """Ensure desktop launcher and autostart files exist."""
+    """Ensure desktop launcher and icon exist (skipped inside Flatpak)."""
+    if in_flatpak_sandbox():
+        return
     APP_DESKTOP_FILE.parent.mkdir(parents=True, exist_ok=True)
     if not APP_ICON_FILE.is_file():
         generate_app_icon(APP_ICON_FILE)
 
-    content = f"""[Desktop Entry]
+    if not APP_DESKTOP_FILE.is_file():
+        exec_path = Path.home() / ".local" / "bin" / "easyeffects-auto-preset"
+        content = f"""[Desktop Entry]
 Type=Application
 Name=EasyEffects Auto Preset
 GenericName=Audio Preset Switcher
 Comment=Automatic EasyEffects preset switcher for YouTube and Voice Meetings
-Exec={Path.home()}/.local/bin/easyeffects-auto-preset
+Exec="{exec_path}"
 Icon={APP_ICON_FILE}
 Terminal=false
 Categories=Audio;AudioVideo;Utility;
 Keywords=easyeffects;audio;preset;youtube;meeting;
 """
-    APP_DESKTOP_FILE.write_text(content, encoding="utf-8")
+        APP_DESKTOP_FILE.write_text(content, encoding="utf-8")
 
 
 def main():
@@ -3527,7 +3876,8 @@ def main():
     parser.add_argument("-V", "--version", action="version", version=f"easyeffects-auto-preset v{APP_VERSION}")
     parser.add_argument("-m", "--minimized", action="store_true", help="Start minimized to the system tray")
     parser.add_argument("--tray", action="store_true", help="Alias for --minimized")
-    parser.add_argument("--cli-status", action="store_true", help="Print current status and exit")
+    parser.add_argument("-s", "--status", "--cli-status", dest="cli_status", action="store_true", help="Print current status and exit")
+    parser.add_argument("-l", "--list-presets", action="store_true", help="List available EasyEffects presets and exit")
     parser.add_argument("--switch", type=str, help="Immediately apply an output preset and exit")
     parser.add_argument(
         "--install-presets",
@@ -3546,6 +3896,16 @@ def main():
         help="Download and install the latest release from GitHub Releases and restart the service",
     )
     args = parser.parse_args()
+
+    if args.list_presets:
+        out_p, in_p = list_available_presets()
+        print("Output presets:")
+        for p in out_p:
+            print(f"  • {p}")
+        print("Input presets:")
+        for p in in_p:
+            print(f"  • {p}")
+        sys.exit(0)
 
     if args.install_presets:
         count, names, targets = install_bundled_presets(overwrite=True)

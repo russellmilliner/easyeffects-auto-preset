@@ -6,9 +6,8 @@ After=graphical-session.target
 
 [Service]
 Type=simple
-# Launch Python GUI tray app or native Rust daemon:
-# ExecStart=%h/.local/bin/easyeffects-auto-preset --minimized
-ExecStart=/usr/bin/env easyeffects-auto-preset-gui --minimized
+# Launch Python GUI tray app (or replace with easyeffects-auto-preset-daemon for headless Rust daemon):
+ExecStart=%h/.local/bin/easyeffects-auto-preset --minimized
 Restart=on-failure
 SuccessExitStatus=0 15 SIGTERM SIGKILL
 RestartSec=3

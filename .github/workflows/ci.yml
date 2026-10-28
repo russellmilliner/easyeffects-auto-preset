@@ -16,13 +16,24 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
-      - name: Rust Check & Build
+      - name: Rust Format, Clippy, Test & Build
         run: |
-          cargo check --verbose
+          cargo fmt --all -- --check
+          cargo clippy --all-targets -- -D warnings
           cargo test --verbose
           cargo build --release --verbose
 
-      - name: Python Syntax Check
+      - name: Install Python Test Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pyqt6 python3-pytest libegl1 libxkbcommon0
+
+      - name: Python Syntax & Unit Tests
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
           python3 -m py_compile python/easyeffects_auto_preset.py
+          pytest -v tests

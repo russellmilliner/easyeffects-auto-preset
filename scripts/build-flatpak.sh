@@ -41,9 +41,14 @@ else
     "$WORK_DIR/build-dir" \
     sh -c "
       set -euo pipefail
+      pip3 install --prefix=/app --no-deps --no-build-isolation \
+        https://files.pythonhosted.org/packages/71/e5/aaaa629a17f5abd9d6f80d5bd8cbbc8b91434f017d03eb5df7d4258ecb41/pyqt6_sip-13.13.0-cp313-cp313-manylinux1_x86_64.manylinux_2_5_x86_64.whl \
+        https://files.pythonhosted.org/packages/c3/a0/bd1399740dfa80c0a94d20b02d89962a31458233dcf70eaa09bfbccf3d0f/pyqt6-6.11.0-cp310-abi3-manylinux_2_34_x86_64.whl
+      PYTHONPATH=/app/lib/python3.13/site-packages python3 -c 'import PyQt6.QtWidgets, PyQt6.QtGui, PyQt6.QtCore'
       cargo build --release --manifest-path '$REPO_ROOT/Cargo.toml'
-      install -Dm755 \"\$CARGO_TARGET_DIR/release/easyeffects-auto-preset\" -t /app/bin/
+      install -Dm755 \"\$CARGO_TARGET_DIR/release/easyeffects-auto-preset\" /app/bin/easyeffects-auto-preset-daemon
       install -Dm755 '$REPO_ROOT/python/easyeffects_auto_preset.py' /app/bin/easyeffects-auto-preset-gui
+      install -Dm755 '$REPO_ROOT/python/easyeffects_auto_preset.py' /app/bin/easyeffects-auto-preset
       install -Dm644 '$REPO_ROOT/data/${APP_ID}.desktop' -t /app/share/applications/
       install -Dm644 '$REPO_ROOT/data/${APP_ID}.metainfo.xml' -t /app/share/metainfo/
       install -Dm644 '$REPO_ROOT/data/icons/${APP_ID}.png' -t /app/share/icons/hicolor/128x128/apps/
@@ -56,12 +61,13 @@ else
     --command=easyeffects-auto-preset-gui \
     --share=ipc \
     --share=network \
-    --socket=x11 \
+    --socket=fallback-x11 \
     --socket=wayland \
     --socket=pulseaudio \
     --device=dri \
     --talk-name=org.kde.StatusNotifierWatcher \
     --talk-name=org.freedesktop.Notifications \
+    --talk-name=org.freedesktop.Flatpak \
     --filesystem=xdg-config/easyeffects-auto-preset:create \
     --filesystem=xdg-data/easyeffects:create \
     --filesystem=~/.var/app/com.github.wwmm.easyeffects:create

@@ -29,6 +29,7 @@ const DEFAULT_CONFIG_JSON: &str = r#"{
   "detect_youtube": true,
   "detect_media_apps": true,
   "pause_media_in_meetings": true,
+  "show_notifications": true,
   "check_updates_on_startup": true
 }"#;
 
@@ -80,7 +81,6 @@ const ALERT_KEYWORDS: &[&str] = &[
     "alert",
     "ringtone",
     "ringer",
-    "chime",
     "ping",
     "ding",
     "bell",
@@ -301,6 +301,8 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub pause_media_in_meetings: bool,
     #[serde(default = "default_true")]
+    pub show_notifications: bool,
+    #[serde(default = "default_true")]
     pub check_updates_on_startup: bool,
 }
 
@@ -329,42 +331,93 @@ impl Default for Config {
     }
 }
 
-pub fn get_config_path() -> PathBuf {
+use std::sync::OnceLock;
+
+pub fn get_config_dir() -> PathBuf {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        if !xdg.trim().is_empty() {
+            return PathBuf::from(xdg).join("easyeffects-auto-preset");
+        }
+    }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home)
         .join(".config")
         .join("easyeffects-auto-preset")
-        .join("config.json")
+}
+
+pub fn get_config_path() -> PathBuf {
+    get_config_dir().join("config.json")
+}
+
+impl Config {
+    pub fn sanitize(&mut self) {
+        if !self.debounce_seconds.is_finite() || self.debounce_seconds < 0.0 {
+            self.debounce_seconds = 2.0;
+        } else {
+            self.debounce_seconds = self.debounce_seconds.min(60.0);
+        }
+        if !self.meeting_onset_seconds.is_finite() || self.meeting_onset_seconds < 0.0 {
+            self.meeting_onset_seconds = 3.5;
+        } else {
+            self.meeting_onset_seconds = self.meeting_onset_seconds.min(60.0);
+        }
+        if !self.check_interval_seconds.is_finite() || self.check_interval_seconds < 0.25 {
+            self.check_interval_seconds = 1.0;
+        } else {
+            self.check_interval_seconds = self.check_interval_seconds.min(30.0);
+        }
+    }
 }
 
 pub fn load_config() -> Config {
     let path = get_config_path();
     if let Ok(contents) = fs::read_to_string(&path) {
-        if let Ok(cfg) = serde_json::from_str(&contents) {
+        if let Ok(mut cfg) = serde_json::from_str::<Config>(&contents) {
+            cfg.sanitize();
             return cfg;
         }
     }
     Config::default()
 }
 
+pub fn in_flatpak_sandbox() -> bool {
+    Path::new("/.flatpak-info").exists() || std::env::var("FLATPAK_ID").is_ok()
+}
+
 pub fn get_easyeffects_cmd() -> (String, Vec<String>) {
-    if Command::new("which")
-        .arg("easyeffects")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-    {
-        ("easyeffects".to_string(), vec![])
-    } else {
-        (
-            "flatpak".to_string(),
-            vec![
-                "run".to_string(),
-                "--command=easyeffects".to_string(),
-                "com.github.wwmm.easyeffects".to_string(),
-            ],
-        )
-    }
+    static CACHED_CMD: OnceLock<(String, Vec<String>)> = OnceLock::new();
+    CACHED_CMD
+        .get_or_init(|| {
+            if in_flatpak_sandbox() {
+                (
+                    "flatpak-spawn".to_string(),
+                    vec![
+                        "--host".to_string(),
+                        "sh".to_string(),
+                        "-c".to_string(),
+                        "if command -v easyeffects >/dev/null 2>&1; then exec easyeffects \"$@\"; else exec flatpak run --command=easyeffects com.github.wwmm.easyeffects \"$@\"; fi".to_string(),
+                        "easyeffects".to_string(),
+                    ],
+                )
+            } else if Command::new("which")
+                .arg("easyeffects")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
+                ("easyeffects".to_string(), vec![])
+            } else {
+                (
+                    "flatpak".to_string(),
+                    vec![
+                        "run".to_string(),
+                        "--command=easyeffects".to_string(),
+                        "com.github.wwmm.easyeffects".to_string(),
+                    ],
+                )
+            }
+        })
+        .clone()
 }
 
 pub fn apply_preset(output_preset: &str, input_preset: Option<&str>) -> bool {
@@ -433,7 +486,7 @@ pub fn list_available_presets() -> (Vec<String>, Vec<String>) {
                 } else {
                     let sp: Vec<&str> = trimmed.split_whitespace().collect();
                     if sp.len() > 1 && sp[0].parse::<u32>().is_ok() {
-                        &trimmed[sp[0].len()..].trim()
+                        trimmed[sp[0].len()..].trim()
                     } else {
                         trimmed
                     }
@@ -452,7 +505,8 @@ pub fn list_available_presets() -> (Vec<String>, Vec<String>) {
     // Fallback directly to Flatpak directory
     if outputs.is_empty() {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let p = Path::new(&home).join(".var/app/com.github.wwmm.easyeffects/data/easyeffects/output");
+        let p =
+            Path::new(&home).join(".var/app/com.github.wwmm.easyeffects/data/easyeffects/output");
         if let Ok(entries) = fs::read_dir(p) {
             for entry in entries.flatten() {
                 if let Some(stem) = entry.path().file_stem() {
@@ -467,7 +521,53 @@ pub fn list_available_presets() -> (Vec<String>, Vec<String>) {
     (outputs, inputs)
 }
 
+#[derive(Debug, Deserialize)]
+struct PactlJsonItem {
+    #[serde(default)]
+    index: u64,
+    #[serde(default)]
+    corked: Option<bool>,
+    #[serde(default)]
+    mute: Option<bool>,
+    #[serde(default)]
+    properties: HashMap<String, serde_json::Value>,
+}
+
+pub fn parse_pactl_json(raw: &str) -> Option<Vec<HashMap<String, String>>> {
+    let items: Vec<PactlJsonItem> = serde_json::from_str(raw).ok()?;
+    let mut blocks = Vec::with_capacity(items.len());
+    for item in items {
+        let mut map = HashMap::new();
+        map.insert("id".to_string(), item.index.to_string());
+        for (k, v) in item.properties {
+            let val_str = match v {
+                serde_json::Value::String(s) => s,
+                other => other.to_string().trim_matches('"').to_string(),
+            };
+            map.insert(k, val_str);
+        }
+        if let Some(c) = item.corked {
+            map.insert(
+                "Corked".to_string(),
+                if c { "yes" } else { "no" }.to_string(),
+            );
+            map.entry("pulse.corked".to_string())
+                .or_insert_with(|| if c { "true" } else { "false" }.to_string());
+        }
+        if let Some(m) = item.mute {
+            map.insert("Mute".to_string(), if m { "yes" } else { "no" }.to_string());
+        }
+        blocks.push(map);
+    }
+    Some(blocks)
+}
+
 fn parse_pactl_blocks(raw: &str, block_prefix: &str) -> Vec<HashMap<String, String>> {
+    if raw.trim_start().starts_with('[') {
+        if let Some(blocks) = parse_pactl_json(raw) {
+            return blocks;
+        }
+    }
     let mut blocks = Vec::new();
     let mut current: Option<HashMap<String, String>> = None;
 
@@ -477,7 +577,7 @@ fn parse_pactl_blocks(raw: &str, block_prefix: &str) -> Vec<HashMap<String, Stri
                 blocks.push(b);
             }
             let mut map = HashMap::new();
-            if let Some(id) = line.split('#').last() {
+            if let Some(id) = line.split('#').next_back() {
                 map.insert("id".to_string(), id.trim().to_string());
             }
             current = Some(map);
@@ -502,13 +602,53 @@ fn parse_pactl_blocks(raw: &str, block_prefix: &str) -> Vec<HashMap<String, Stri
     blocks
 }
 
-#[derive(Debug)]
-pub struct AudioEvaluation {
-    pub meeting_active: bool,
-    pub meeting_strong_signal: bool,
-    pub youtube_playing: bool,
-    pub meeting_info: String,
-    pub youtube_info: String,
+fn query_pactl_streams(stream_type: &str, block_prefix: &str) -> Vec<HashMap<String, String>> {
+    if let Ok(out) = Command::new("pactl")
+        .env("LC_ALL", "C")
+        .args(["-f", "json", "list", stream_type])
+        .output()
+    {
+        if out.status.success() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            if let Some(blocks) = parse_pactl_json(&text) {
+                return blocks;
+            }
+        }
+    }
+    if let Ok(out) = Command::new("pactl")
+        .env("LC_ALL", "C")
+        .args(["list", stream_type])
+        .output()
+    {
+        let text = String::from_utf8_lossy(&out.stdout);
+        return parse_pactl_blocks(&text, block_prefix);
+    }
+    Vec::new()
+}
+
+pub fn contains_alert_keyword_word(haystack: &str, keyword: &str) -> bool {
+    let h = haystack.to_lowercase();
+    let k = keyword.to_lowercase();
+    if k.is_empty() {
+        return false;
+    }
+    for (idx, _) in h.match_indices(&k) {
+        let before_ok = h[..idx]
+            .chars()
+            .next_back()
+            .map(|c| !c.is_ascii_alphanumeric())
+            .unwrap_or(true);
+        let after_idx = idx + k.len();
+        let after_ok = h[after_idx..]
+            .chars()
+            .next()
+            .map(|c| !c.is_ascii_alphanumeric())
+            .unwrap_or(true);
+        if before_ok && after_ok {
+            return true;
+        }
+    }
+    false
 }
 
 /// Returns true if a PipeWire / PulseAudio stream is a short notification, ringtone, or UI alert sound.
@@ -521,13 +661,32 @@ pub fn is_alert_or_notification_stream(stream: &HashMap<String, String>) -> bool
     if ALERT_ROLES.contains(&role.as_str()) {
         return true;
     }
+    let category = stream
+        .get("media.category")
+        .cloned()
+        .unwrap_or_default()
+        .to_lowercase();
+    if category.contains("event") || category.contains("notification") {
+        return true;
+    }
     let media_lower = stream
         .get("media.name")
         .cloned()
         .unwrap_or_default()
         .to_lowercase();
+    let node_lower = stream
+        .get("node.name")
+        .cloned()
+        .unwrap_or_default()
+        .to_lowercase();
+    let file_lower = stream
+        .get("media.filename")
+        .cloned()
+        .unwrap_or_default()
+        .to_lowercase();
+    let combined = format!("{} {} {}", media_lower, node_lower, file_lower);
     for kw in ALERT_KEYWORDS {
-        if media_lower.contains(kw) {
+        if contains_alert_keyword_word(&combined, kw) {
             return true;
         }
     }
@@ -536,7 +695,10 @@ pub fn is_alert_or_notification_stream(stream: &HashMap<String, String>) -> bool
 
 /// Inspects a single PipeWire / PulseAudio sink-input property map to determine whether
 /// it represents active YouTube, music, movie, or video playback.
-pub fn detect_media_playback_stream(sk: &HashMap<String, String>, config: &Config) -> Option<String> {
+pub fn detect_media_playback_stream(
+    sk: &HashMap<String, String>,
+    config: &Config,
+) -> Option<String> {
     if !config.detect_youtube && !config.detect_media_apps {
         return None;
     }
@@ -611,6 +773,15 @@ pub fn detect_media_playback_stream(sk: &HashMap<String, String>, config: &Confi
     None
 }
 
+#[derive(Debug)]
+pub struct AudioEvaluation {
+    pub meeting_active: bool,
+    pub meeting_strong_signal: bool,
+    pub youtube_playing: bool,
+    pub meeting_info: String,
+    pub youtube_info: String,
+}
+
 pub fn evaluate_audio_streams(config: &Config) -> AudioEvaluation {
     let mut eval = AudioEvaluation {
         meeting_active: false,
@@ -621,143 +792,153 @@ pub fn evaluate_audio_streams(config: &Config) -> AudioEvaluation {
     };
 
     // 1. Check microphone recording (source-outputs)
-    if let Ok(out) = Command::new("pactl").args(["list", "source-outputs"]).output() {
-        let text = String::from_utf8_lossy(&out.stdout);
-        let sources = parse_pactl_blocks(&text, "Source Output #");
-        for sc in sources {
-            let corked = sc
-                .get("Corked")
-                .or_else(|| sc.get("pulse.corked"))
-                .cloned()
-                .unwrap_or_else(|| "no".to_string())
-                .to_lowercase();
-            let mute = sc
-                .get("Mute")
-                .cloned()
-                .unwrap_or_else(|| "no".to_string())
-                .to_lowercase();
-            let is_recording = (corked == "no" || corked == "false") && mute != "yes" && mute != "true";
-            if !is_recording {
-                continue;
-            }
+    let sources = query_pactl_streams("source-outputs", "Source Output #");
+    for sc in sources {
+        let corked = sc
+            .get("Corked")
+            .or_else(|| sc.get("pulse.corked"))
+            .cloned()
+            .unwrap_or_else(|| "no".to_string())
+            .to_lowercase();
+        let mute = sc
+            .get("Mute")
+            .cloned()
+            .unwrap_or_else(|| "no".to_string())
+            .to_lowercase();
+        let is_recording = (corked == "no" || corked == "false") && mute != "yes" && mute != "true";
+        if !is_recording {
+            continue;
+        }
 
-            let app = sc.get("application.name").cloned().unwrap_or_default();
-            let app_lower = app.to_lowercase();
-            let binary = sc
-                .get("application.process.binary")
-                .cloned()
-                .unwrap_or_default()
-                .to_lowercase();
-            let media = sc.get("media.name").cloned().unwrap_or_default();
-            let media_lower = media.to_lowercase();
+        let app = sc.get("application.name").cloned().unwrap_or_default();
+        let app_lower = app.to_lowercase();
+        let binary = sc
+            .get("application.process.binary")
+            .cloned()
+            .unwrap_or_default()
+            .to_lowercase();
+        let media = sc.get("media.name").cloned().unwrap_or_default();
+        let media_lower = media.to_lowercase();
 
-            if binary.contains("speech-dispatcher")
-                || binary.contains("sd_dummy")
-                || binary.contains("easyeffects")
-                || binary.contains("pavucontrol")
-                || app_lower.contains("easyeffects")
-                || app_lower.contains("pavucontrol")
-            {
-                continue;
-            }
+        if binary.contains("speech-dispatcher")
+            || binary.contains("sd_dummy")
+            || binary.contains("easyeffects")
+            || binary.contains("pavucontrol")
+            || app_lower.contains("easyeffects")
+            || app_lower.contains("pavucontrol")
+        {
+            continue;
+        }
 
-            if media_lower.contains("peak detect") || media_lower.contains("monitor") {
-                continue;
-            }
+        if media_lower.contains("peak detect") || media_lower.contains("monitor") {
+            continue;
+        }
 
-            if is_alert_or_notification_stream(&sc) {
-                continue;
-            }
+        if is_alert_or_notification_stream(&sc) {
+            continue;
+        }
 
-            if config.detect_microphone {
-                eval.meeting_active = true;
-                eval.meeting_strong_signal = true;
-                eval.meeting_info = format!("Microphone in use by {} ({})", app, media);
-                break;
-            }
+        if config.detect_microphone {
+            eval.meeting_active = true;
+            eval.meeting_strong_signal = true;
+            eval.meeting_info = format!("Microphone in use by {} ({})", app, media);
+            break;
         }
     }
 
     // 2. Check playback streams (sink-inputs)
-    if let Ok(out) = Command::new("pactl").args(["list", "sink-inputs"]).output() {
-        let text = String::from_utf8_lossy(&out.stdout);
-        let sinks = parse_pactl_blocks(&text, "Sink Input #");
-        for sk in sinks {
-            let corked = sk
-                .get("Corked")
-                .or_else(|| sk.get("pulse.corked"))
-                .cloned()
-                .unwrap_or_else(|| "yes".to_string())
-                .to_lowercase();
-            let mute = sk
-                .get("Mute")
-                .cloned()
-                .unwrap_or_else(|| "no".to_string())
-                .to_lowercase();
-            let is_playing = (corked == "no" || corked == "false") && mute != "yes" && mute != "true";
-            if !is_playing {
-                continue;
-            }
+    let sinks = query_pactl_streams("sink-inputs", "Sink Input #");
+    for sk in sinks {
+        let corked = sk
+            .get("Corked")
+            .or_else(|| sk.get("pulse.corked"))
+            .cloned()
+            .unwrap_or_else(|| "yes".to_string())
+            .to_lowercase();
+        let mute = sk
+            .get("Mute")
+            .cloned()
+            .unwrap_or_else(|| "no".to_string())
+            .to_lowercase();
+        let is_playing = (corked == "no" || corked == "false") && mute != "yes" && mute != "true";
+        if !is_playing {
+            continue;
+        }
 
-            let app = sk.get("application.name").cloned().unwrap_or_default();
-            let binary = sk
-                .get("application.process.binary")
-                .cloned()
-                .unwrap_or_default()
-                .to_lowercase();
-            let media = sk.get("media.name").cloned().unwrap_or_default();
-            let role = sk.get("media.role").cloned().unwrap_or_default().to_lowercase();
+        let app = sk.get("application.name").cloned().unwrap_or_default();
+        let binary = sk
+            .get("application.process.binary")
+            .cloned()
+            .unwrap_or_default()
+            .to_lowercase();
+        let media = sk.get("media.name").cloned().unwrap_or_default();
+        let role = sk
+            .get("media.role")
+            .cloned()
+            .unwrap_or_default()
+            .to_lowercase();
 
-            if binary.contains("speech-dispatcher") || binary.contains("sd_dummy") {
-                continue;
-            }
+        if binary.contains("speech-dispatcher")
+            || binary.contains("sd_dummy")
+            || binary.contains("easyeffects")
+        {
+            continue;
+        }
 
-            // Ignore explicit notification / alert sounds
-            if is_alert_or_notification_stream(&sk) {
-                continue;
-            }
+        // Ignore explicit notification / alert sounds
+        if is_alert_or_notification_stream(&sk) {
+            continue;
+        }
 
-            let mut is_sk_meeting = false;
+        let mut is_sk_meeting = false;
 
-            // Meeting detection via playback role or application (only when uncorked and not an alert)
-            if config.detect_communication_role && (role == "communication" || role == "phone") {
-                eval.meeting_active = true;
-                eval.meeting_strong_signal = true;
-                is_sk_meeting = true;
-                eval.meeting_info = format!("Communication audio stream ({})", app);
-            } else {
-                for kw in MEETING_KEYWORDS {
-                    if media.to_lowercase().contains(kw) || app.to_lowercase().contains(kw) {
-                        eval.meeting_active = true;
-                        eval.meeting_strong_signal = true;
-                        is_sk_meeting = true;
-                        eval.meeting_info = format!("Meeting detected: {}", kw);
-                        break;
-                    }
-                }
-                if !is_sk_meeting
-                    && config.detect_meeting_apps
-                    && KNOWN_MEETING_BINARIES.contains(&binary.as_str())
-                {
+        // Meeting detection via playback role or application (only when uncorked and not an alert)
+        if config.detect_communication_role && (role == "communication" || role == "phone") {
+            eval.meeting_active = true;
+            eval.meeting_strong_signal = true;
+            is_sk_meeting = true;
+            eval.meeting_info = format!("Communication audio stream ({})", app);
+        } else {
+            for kw in MEETING_KEYWORDS {
+                if media.to_lowercase().contains(kw) || app.to_lowercase().contains(kw) {
                     eval.meeting_active = true;
+                    eval.meeting_strong_signal = true;
                     is_sk_meeting = true;
-                    if eval.meeting_info.is_empty() {
-                        eval.meeting_info = format!("Meeting app: {} ({})", app, media);
-                    }
+                    eval.meeting_info = format!("Meeting detected: {}", kw);
+                    break;
                 }
             }
-
-            // YouTube, Music, Movie & Video playback detection (only when actively playing sound)
-            if !is_sk_meeting && is_playing {
-                if let Some(info) = detect_media_playback_stream(&sk, config) {
-                    eval.youtube_playing = true;
-                    eval.youtube_info = info;
+            if !is_sk_meeting
+                && config.detect_meeting_apps
+                && KNOWN_MEETING_BINARIES.contains(&binary.as_str())
+            {
+                eval.meeting_active = true;
+                is_sk_meeting = true;
+                if eval.meeting_info.is_empty() {
+                    eval.meeting_info = format!("Meeting app: {} ({})", app, media);
                 }
+            }
+        }
+
+        // YouTube, Music, Movie & Video playback detection (only when actively playing sound)
+        if !is_sk_meeting && is_playing {
+            if let Some(info) = detect_media_playback_stream(&sk, config) {
+                eval.youtube_playing = true;
+                eval.youtube_info = info;
             }
         }
     }
 
     eval
+}
+
+pub const ALLOWED_DOWNLOAD_PREFIX: &str =
+    "https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/";
+pub const ALLOWED_RELEASE_URL_PREFIX: &str =
+    "https://github.com/russellmilliner/easyeffects-auto-preset/releases";
+
+pub fn is_allowed_download_url(url: &str) -> bool {
+    url.trim().starts_with(ALLOWED_DOWNLOAD_PREFIX)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -769,7 +950,11 @@ pub struct UpdateCheckResult {
     pub release_url: String,
     pub download_url: String,
     pub flatpak_download_url: String,
+    #[serde(default)]
+    pub flatpak_sha256_url: String,
     pub tarball_download_url: String,
+    #[serde(default)]
+    pub tarball_sha256_url: String,
     pub release_notes: String,
     pub message: String,
 }
@@ -794,27 +979,32 @@ struct GithubReleaseResponse {
 }
 
 pub fn parse_semver(version: &str) -> Option<(u32, u32, u32)> {
-    let trimmed = version.trim().trim_start_matches('v').trim_start_matches('V');
+    let trimmed = version
+        .trim()
+        .trim_start_matches('v')
+        .trim_start_matches('V');
     let core = trimmed.split(['-', '+']).next().unwrap_or(trimmed);
     let mut parts = core.split('.');
     let major = parts.next()?.parse::<u32>().ok()?;
     let minor = parts.next().unwrap_or("0").parse::<u32>().ok()?;
     let patch = parts.next().unwrap_or("0").parse::<u32>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
     Some((major, minor, patch))
 }
 
 pub fn is_newer_version(current: &str, latest: &str) -> bool {
     match (parse_semver(current), parse_semver(latest)) {
         (Some(cur), Some(lat)) => lat > cur,
-        _ => {
-            let cur_clean = current.trim().trim_start_matches(['v', 'V']);
-            let lat_clean = latest.trim().trim_start_matches(['v', 'V']);
-            !lat_clean.is_empty() && lat_clean != cur_clean
-        }
+        _ => false,
     }
 }
 
-pub fn parse_github_release_json(body: &str, current_version: &str) -> Result<UpdateCheckResult, String> {
+pub fn parse_github_release_json(
+    body: &str,
+    current_version: &str,
+) -> Result<UpdateCheckResult, String> {
     let parsed: GithubReleaseResponse =
         serde_json::from_str(body).map_err(|e| format!("Invalid GitHub release JSON: {e}"))?;
 
@@ -834,26 +1024,39 @@ pub fn parse_github_release_json(body: &str, current_version: &str) -> Result<Up
     };
     let current_tag = format!("v{current_clean}");
     let update_available = is_newer_version(&current_clean, &latest_clean);
-    let release_url = if parsed.html_url.trim().is_empty() {
-        GITHUB_RELEASES_PAGE_URL.to_string()
+    let release_url = if parsed
+        .html_url
+        .trim()
+        .starts_with(ALLOWED_RELEASE_URL_PREFIX)
+    {
+        parsed.html_url.trim().to_string()
     } else {
-        parsed.html_url
+        GITHUB_RELEASES_PAGE_URL.to_string()
     };
 
     let mut flatpak_download_url = String::new();
+    let mut flatpak_sha256_url = String::new();
     let mut tarball_download_url = String::new();
+    let mut tarball_sha256_url = String::new();
     let mut binary_download_url = String::new();
     for asset in &parsed.assets {
         let name = asset.name.to_lowercase();
-        if name.ends_with(".sha256") {
+        let url = asset.browser_download_url.trim();
+        if !is_allowed_download_url(url) {
             continue;
         }
-        if name.ends_with(".flatpak") {
-            flatpak_download_url = asset.browser_download_url.clone();
+        if name.ends_with(".flatpak.sha256") {
+            flatpak_sha256_url = url.to_string();
+        } else if name.ends_with(".tar.gz.sha256") {
+            tarball_sha256_url = url.to_string();
+        } else if name.ends_with(".sha256") {
+            continue;
+        } else if name.ends_with(".flatpak") {
+            flatpak_download_url = url.to_string();
         } else if name.ends_with(".tar.gz") {
-            tarball_download_url = asset.browser_download_url.clone();
+            tarball_download_url = url.to_string();
         } else if name.starts_with("easyeffects-auto-preset-") {
-            binary_download_url = asset.browser_download_url.clone();
+            binary_download_url = url.to_string();
         }
     }
     let download_url = if !tarball_download_url.is_empty() {
@@ -881,10 +1084,62 @@ pub fn parse_github_release_json(body: &str, current_version: &str) -> Result<Up
         release_url,
         download_url,
         flatpak_download_url,
+        flatpak_sha256_url,
         tarball_download_url,
+        tarball_sha256_url,
         release_notes,
         message,
     })
+}
+
+pub fn extract_expected_sha256(sha256_text: &str) -> Option<String> {
+    let token = sha256_text.split_whitespace().next()?;
+    let lower = token.trim().to_ascii_lowercase();
+    if lower.len() == 64 && lower.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(lower)
+    } else {
+        None
+    }
+}
+
+pub fn verify_file_sha256(file_path: &Path, expected_hex: &str) -> Result<(), String> {
+    let expected = extract_expected_sha256(expected_hex)
+        .ok_or_else(|| "Invalid expected SHA-256 digest format".to_string())?;
+    let out = Command::new("sha256sum")
+        .arg(file_path)
+        .output()
+        .map_err(|e| format!("Failed to invoke sha256sum: {e}"))?;
+    if !out.status.success() {
+        return Err("sha256sum returned non-zero status".to_string());
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let actual = extract_expected_sha256(&stdout)
+        .ok_or_else(|| "Could not parse sha256sum output".to_string())?;
+    if actual != expected {
+        return Err(format!(
+            "SHA-256 checksum mismatch! Expected {expected}, got {actual}"
+        ));
+    }
+    Ok(())
+}
+
+fn create_secure_temp_dir(base_dir: &Path, prefix: &str) -> Result<PathBuf, String> {
+    use std::os::unix::fs::DirBuilderExt;
+    let _ = fs::create_dir_all(base_dir);
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    for attempt in 0..32u32 {
+        let candidate = base_dir.join(format!("{prefix}-{pid}-{nanos}-{attempt}"));
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        if builder.create(&candidate).is_ok() {
+            return Ok(candidate);
+        }
+    }
+    Err("Failed to create exclusive temporary directory".to_string())
 }
 
 pub fn check_for_updates(current_version: &str) -> Result<UpdateCheckResult, String> {
@@ -917,12 +1172,38 @@ pub fn install_update_from_github(current_version: &str) -> Result<String, Strin
         return Ok(format!("Already up to date ({})", info.current_version));
     }
 
-    let in_flatpak = Path::new("/.flatpak-info").exists() || std::env::var("FLATPAK_ID").is_ok();
-    if in_flatpak && !info.flatpak_download_url.is_empty() {
-        let tmp_bundle = std::env::temp_dir().join(format!(
+    if in_flatpak_sandbox() && !info.flatpak_download_url.is_empty() {
+        if !is_allowed_download_url(&info.flatpak_download_url) {
+            return Err("Refusing to download Flatpak bundle from untrusted host".to_string());
+        }
+        let sha_url = if !info.flatpak_sha256_url.is_empty() {
+            info.flatpak_sha256_url.clone()
+        } else {
+            format!("{}.sha256", info.flatpak_download_url)
+        };
+        if !is_allowed_download_url(&sha_url) {
+            return Err("Refusing to download Flatpak checksum from untrusted host".to_string());
+        }
+
+        // Store inside user config dir so host flatpak-spawn can access the verified file path
+        let tmp_dir = create_secure_temp_dir(&get_config_dir(), "flatpak-upd")?;
+        let tmp_bundle = tmp_dir.join(format!(
             "easyeffects-auto-preset-{}.flatpak",
             info.latest_version
         ));
+        let sha_out = Command::new("curl")
+            .args(["-fsSL", "--max-time", "30", &sha_url])
+            .output()
+            .map_err(|e| {
+                let _ = fs::remove_dir_all(&tmp_dir);
+                format!("Failed to fetch Flatpak SHA-256 checksum: {e}")
+            })?;
+        if !sha_out.status.success() {
+            let _ = fs::remove_dir_all(&tmp_dir);
+            return Err("Failed to download required .flatpak.sha256 checksum file".to_string());
+        }
+        let expected_sha = String::from_utf8_lossy(&sha_out.stdout).to_string();
+
         let status = Command::new("curl")
             .args([
                 "-fsSL",
@@ -933,10 +1214,19 @@ pub fn install_update_from_github(current_version: &str) -> Result<String, Strin
                 &info.flatpak_download_url,
             ])
             .status()
-            .map_err(|e| format!("Failed to download Flatpak bundle: {e}"))?;
+            .map_err(|e| {
+                let _ = fs::remove_dir_all(&tmp_dir);
+                format!("Failed to download Flatpak bundle: {e}")
+            })?;
         if !status.success() {
+            let _ = fs::remove_dir_all(&tmp_dir);
             return Err("Failed to download Flatpak bundle from GitHub Releases".to_string());
         }
+        if let Err(e) = verify_file_sha256(&tmp_bundle, &expected_sha) {
+            let _ = fs::remove_dir_all(&tmp_dir);
+            return Err(e);
+        }
+
         let install_status = Command::new("flatpak-spawn")
             .args([
                 "--host",
@@ -948,27 +1238,56 @@ pub fn install_update_from_github(current_version: &str) -> Result<String, Strin
                 &tmp_bundle.to_string_lossy(),
             ])
             .status()
-            .map_err(|e| format!("Failed to invoke flatpak-spawn: {e}"))?;
+            .map_err(|e| {
+                let _ = fs::remove_dir_all(&tmp_dir);
+                format!("Failed to invoke flatpak-spawn: {e}")
+            })?;
+        let _ = fs::remove_dir_all(&tmp_dir);
         if !install_status.success() {
             return Err("flatpak install returned non-zero status".to_string());
         }
         return Ok(format!(
-            "Installed EasyEffects Auto Preset {} Flatpak successfully.",
+            "Installed EasyEffects Auto Preset {} Flatpak (SHA-256 verified) successfully.",
             info.latest_version
         ));
     }
 
     if info.tarball_download_url.is_empty() {
-        return Err("No Linux release archive (.tar.gz) found in latest GitHub Release".to_string());
+        return Err(
+            "No Linux release archive (.tar.gz) found in latest GitHub Release".to_string(),
+        );
+    }
+    if !is_allowed_download_url(&info.tarball_download_url) {
+        return Err("Refusing to download release archive from untrusted host".to_string());
+    }
+    let sha_url = if !info.tarball_sha256_url.is_empty() {
+        info.tarball_sha256_url.clone()
+    } else {
+        format!("{}.sha256", info.tarball_download_url)
+    };
+    if !is_allowed_download_url(&sha_url) {
+        return Err(
+            "Refusing to download release archive checksum from untrusted host".to_string(),
+        );
     }
 
-    let tmp_dir = std::env::temp_dir().join(format!(
-        "easyeffects-auto-preset-update-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&tmp_dir);
-    fs::create_dir_all(&tmp_dir).map_err(|e| format!("Failed to create temp dir: {e}"))?;
+    let tmp_dir = create_secure_temp_dir(&std::env::temp_dir(), "easyeffects-auto-preset-update")?;
     let archive_path = tmp_dir.join("release.tar.gz");
+
+    let sha_out = Command::new("curl")
+        .args(["-fsSL", "--max-time", "30", &sha_url])
+        .output()
+        .map_err(|e| {
+            let _ = fs::remove_dir_all(&tmp_dir);
+            format!("Failed to fetch SHA-256 checksum: {e}")
+        })?;
+    if !sha_out.status.success() {
+        let _ = fs::remove_dir_all(&tmp_dir);
+        return Err(
+            "Failed to download required .tar.gz.sha256 checksum from GitHub Releases".to_string(),
+        );
+    }
+    let expected_sha = String::from_utf8_lossy(&sha_out.stdout).to_string();
 
     let dl = Command::new("curl")
         .args([
@@ -980,10 +1299,18 @@ pub fn install_update_from_github(current_version: &str) -> Result<String, Strin
             &info.tarball_download_url,
         ])
         .status()
-        .map_err(|e| format!("Failed to download release archive: {e}"))?;
+        .map_err(|e| {
+            let _ = fs::remove_dir_all(&tmp_dir);
+            format!("Failed to download release archive: {e}")
+        })?;
     if !dl.success() {
         let _ = fs::remove_dir_all(&tmp_dir);
         return Err("Failed to download release archive from GitHub Releases".to_string());
+    }
+
+    if let Err(e) = verify_file_sha256(&archive_path, &expected_sha) {
+        let _ = fs::remove_dir_all(&tmp_dir);
+        return Err(e);
     }
 
     let untar = Command::new("tar")
@@ -1012,15 +1339,17 @@ pub fn install_update_from_github(current_version: &str) -> Result<String, Strin
             if p.is_dir() {
                 let py_script = p.join("python/easyeffects_auto_preset.py");
                 if py_script.is_file() {
-                    let dest = local_bin.join("easyeffects-auto-preset");
-                    let _ = Command::new("install")
-                        .args([
-                            "-m",
-                            "755",
-                            &py_script.to_string_lossy(),
-                            &dest.to_string_lossy(),
-                        ])
-                        .status();
+                    for bin_name in ["easyeffects-auto-preset", "easyeffects-auto-preset-gui"] {
+                        let dest = local_bin.join(bin_name);
+                        let _ = Command::new("install")
+                            .args([
+                                "-m",
+                                "755",
+                                &py_script.to_string_lossy(),
+                                &dest.to_string_lossy(),
+                            ])
+                            .status();
+                    }
                     updated_script = true;
                 }
                 let rust_bin = p.join("easyeffects-auto-preset");
@@ -1041,7 +1370,9 @@ pub fn install_update_from_github(current_version: &str) -> Result<String, Strin
 
     let _ = fs::remove_dir_all(&tmp_dir);
     if !updated_script {
-        return Err("Extracted archive did not contain python/easyeffects_auto_preset.py".to_string());
+        return Err(
+            "Extracted archive did not contain python/easyeffects_auto_preset.py".to_string(),
+        );
     }
 
     let _ = Command::new("systemctl")
@@ -1049,16 +1380,26 @@ pub fn install_update_from_github(current_version: &str) -> Result<String, Strin
         .status();
 
     Ok(format!(
-        "Successfully updated EasyEffects Auto Preset to {} and restarted service.",
+        "Successfully updated EasyEffects Auto Preset to {} (SHA-256 verified) and restarted service.",
         info.latest_version
     ))
+}
+
+fn run_busctl_cmd(args: &[&str]) -> Option<std::process::Output> {
+    if in_flatpak_sandbox() {
+        let mut fp_args = vec!["--host", "busctl"];
+        fp_args.extend_from_slice(args);
+        Command::new("flatpak-spawn").args(&fp_args).output().ok()
+    } else {
+        Command::new("busctl").args(args).output().ok()
+    }
 }
 
 pub fn pause_active_media_players() -> Vec<String> {
     let mut paused = Vec::new();
     let mut services = Vec::new();
 
-    if let Ok(out) = Command::new("busctl").args(["--user", "list", "--no-legend"]).output() {
+    if let Some(out) = run_busctl_cmd(&["--user", "list", "--no-legend"]) {
         let text = String::from_utf8_lossy(&out.stdout);
         for line in text.lines() {
             if let Some(svc) = line.split_whitespace().next() {
@@ -1078,57 +1419,49 @@ pub fn pause_active_media_players() -> Vec<String> {
             continue;
         }
 
-        let is_playing = Command::new("busctl")
-            .args([
-                "--user",
-                "get-property",
-                &svc,
-                "/org/mpris/MediaPlayer2",
-                "org.mpris.MediaPlayer2.Player",
-                "PlaybackStatus",
-            ])
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains("\"Playing\""))
-            .unwrap_or(false);
+        let is_playing = run_busctl_cmd(&[
+            "--user",
+            "get-property",
+            &svc,
+            "/org/mpris/MediaPlayer2",
+            "org.mpris.MediaPlayer2.Player",
+            "PlaybackStatus",
+        ])
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("\"Playing\""))
+        .unwrap_or(false);
 
         if !is_playing {
             continue;
         }
 
-        let is_meeting_tab = Command::new("busctl")
-            .args([
-                "--user",
-                "get-property",
-                &svc,
-                "/org/mpris/MediaPlayer2",
-                "org.mpris.MediaPlayer2.Player",
-                "Metadata",
-            ])
-            .output()
-            .map(|o| {
-                let meta = String::from_utf8_lossy(&o.stdout).to_lowercase();
-                MEETING_KEYWORDS.iter().any(|kw| meta.contains(kw))
-            })
-            .unwrap_or(false);
+        let is_meeting_tab = run_busctl_cmd(&[
+            "--user",
+            "get-property",
+            &svc,
+            "/org/mpris/MediaPlayer2",
+            "org.mpris.MediaPlayer2.Player",
+            "Metadata",
+        ])
+        .map(|o| {
+            let meta = String::from_utf8_lossy(&o.stdout).to_lowercase();
+            MEETING_KEYWORDS.iter().any(|kw| meta.contains(kw))
+        })
+        .unwrap_or(false);
 
         if is_meeting_tab {
             continue;
         }
 
-        let ok = Command::new("busctl")
-            .args([
-                "--user",
-                "call",
-                &svc,
-                "/org/mpris/MediaPlayer2",
-                "org.mpris.MediaPlayer2.Player",
-                "Pause",
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
+        let ok = run_busctl_cmd(&[
+            "--user",
+            "call",
+            &svc,
+            "/org/mpris/MediaPlayer2",
+            "org.mpris.MediaPlayer2.Player",
+            "Pause",
+        ])
+        .map(|o| o.status.success())
+        .unwrap_or(false);
 
         if !ok {
             let _ = Command::new("dbus-send")
@@ -1166,6 +1499,7 @@ pub fn is_our_app_cmdline(args: &[String]) -> bool {
         .unwrap_or("");
     let target_basenames = [
         "easyeffects-auto-preset",
+        "easyeffects-auto-preset-daemon",
         "easyeffects_auto_preset.py",
         "easyeffects-auto-preset-gui",
     ];
@@ -1215,18 +1549,37 @@ pub fn is_our_app_cmdline(args: &[String]) -> bool {
     !is_one_shot
 }
 
+fn current_euid() -> Option<u32> {
+    let status = fs::read_to_string("/proc/self/status").ok()?;
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("Uid:") {
+            return rest.split_whitespace().next()?.parse::<u32>().ok();
+        }
+    }
+    None
+}
+
+fn proc_matches_uid(proc_dir: &Path, expected_uid: Option<u32>) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (expected_uid, fs::metadata(proc_dir)) {
+        (Some(uid), Ok(meta)) => meta.uid() == uid,
+        _ => true,
+    }
+}
+
 pub fn enforce_single_instance_rust() {
     let my_pid = std::process::id();
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let cfg_dir = PathBuf::from(home).join(".config").join("easyeffects-auto-preset");
+    let my_uid = current_euid();
+    let cfg_dir = get_config_dir();
     let _ = fs::create_dir_all(&cfg_dir);
     let pid_file = cfg_dir.join("instance.pid");
 
     let mut candidate_pids = Vec::new();
     if let Ok(content) = fs::read_to_string(&pid_file) {
         if let Ok(old_pid) = content.trim().parse::<u32>() {
-            if old_pid > 1 && old_pid != my_pid {
-                let cmdline_path = PathBuf::from(format!("/proc/{}/cmdline", old_pid));
+            let proc_dir = PathBuf::from(format!("/proc/{}", old_pid));
+            if old_pid > 1 && old_pid != my_pid && proc_matches_uid(&proc_dir, my_uid) {
+                let cmdline_path = proc_dir.join("cmdline");
                 if let Ok(raw) = fs::read(&cmdline_path) {
                     let args: Vec<String> = raw
                         .split(|&b| b == 0)
@@ -1244,7 +1597,7 @@ pub fn enforce_single_instance_rust() {
     if let Ok(entries) = fs::read_dir("/proc") {
         for entry in entries.flatten() {
             if let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() {
-                if pid <= 1 || pid == my_pid {
+                if pid <= 1 || pid == my_pid || !proc_matches_uid(&entry.path(), my_uid) {
                     continue;
                 }
                 let cmdline_path = entry.path().join("cmdline");
@@ -1263,7 +1616,10 @@ pub fn enforce_single_instance_rust() {
     }
 
     for pid in &candidate_pids {
-        println!("[*] Terminating previous easyeffects-auto-preset instance (PID {})...", pid);
+        println!(
+            "[*] Terminating previous easyeffects-auto-preset instance (PID {})...",
+            pid
+        );
         let _ = Command::new("kill")
             .args(["-TERM", &pid.to_string()])
             .stdout(Stdio::null())
@@ -1292,12 +1648,19 @@ pub fn enforce_single_instance_rust() {
         }
     }
 
-    let _ = fs::write(&pid_file, format!("{}\n", my_pid));
+    let tmp_pid_file = cfg_dir.join(format!("instance.pid.tmp.{}", my_pid));
+    if fs::write(&tmp_pid_file, format!("{}\n", my_pid)).is_ok() {
+        let _ = fs::rename(&tmp_pid_file, &pid_file);
+    }
 }
 
-fn run_daemon(config: Config) {
+fn run_daemon(mut config: Config) {
+    config.sanitize();
     enforce_single_instance_rust();
-    println!("EasyEffects Auto Preset Rust Daemon v{} starting...", APP_VERSION);
+    println!(
+        "EasyEffects Auto Preset Rust Daemon v{} starting...",
+        APP_VERSION
+    );
     println!("  YouTube Preset: {}", config.youtube_preset);
     println!("  Meeting Preset: {}", config.meeting_preset);
     println!("  Default Preset: {}", config.default_preset);
@@ -1318,19 +1681,35 @@ fn run_daemon(config: Config) {
         });
     }
 
+    let cfg_path = get_config_path();
+    let mut last_cfg_mtime = fs::metadata(&cfg_path).and_then(|m| m.modified()).ok();
     let mut current_mode = "unknown".to_string();
     let mut last_preset = get_current_loaded_preset();
     let mut meeting_started_at: Option<Instant> = None;
     let mut meeting_lost_at: Option<Instant> = None;
     let mut youtube_lost_at: Option<Instant> = None;
+    let mut media_paused_for_meeting = false;
     let mut last_update_check = Instant::now();
     let update_check_interval = Duration::from_secs(6 * 60 * 60);
 
-    let debounce = Duration::from_secs_f64(config.debounce_seconds);
-    let base_onset_secs = config.meeting_onset_seconds.max(0.0);
-    let interval = Duration::from_secs_f64(config.check_interval_seconds.max(0.5));
-
     loop {
+        if let Ok(mtime) = fs::metadata(&cfg_path).and_then(|m| m.modified()) {
+            if last_cfg_mtime.map(|prev| prev != mtime).unwrap_or(true) {
+                last_cfg_mtime = Some(mtime);
+                config = load_config();
+                println!("[*] Reloaded configuration from {}", cfg_path.display());
+            }
+        }
+
+        let debounce = Duration::from_secs_f64(config.debounce_seconds);
+        let base_onset_secs = config.meeting_onset_seconds;
+        let interval = Duration::from_secs_f64(config.check_interval_seconds);
+
+        if !config.enabled {
+            sleep(interval);
+            continue;
+        }
+
         if config.check_updates_on_startup && last_update_check.elapsed() >= update_check_interval {
             last_update_check = Instant::now();
             std::thread::spawn(|| {
@@ -1376,37 +1755,35 @@ fn run_daemon(config: Config) {
             target_mode = "meeting".to_string();
             reason = eval.meeting_info;
             meeting_lost_at = None;
-            if config.pause_media_in_meetings {
+            if config.pause_media_in_meetings && !media_paused_for_meeting {
+                media_paused_for_meeting = true;
                 let paused = pause_active_media_players();
                 if !paused.is_empty() {
                     println!(
-                        "[*] Paused active media application(s) during meeting: {}",
+                        "[*] Paused active media application(s) on meeting start: {}",
                         paused.join(", ")
                     );
                 }
             }
-        } else if !eval.meeting_active {
-            if current_mode == "meeting" {
-                let lost = meeting_lost_at.get_or_insert(now);
-                if lost.elapsed() < debounce {
-                    target_mode = "meeting".to_string();
-                    reason = "Meeting (Grace period)".to_string();
-                }
+        } else if !eval.meeting_active && current_mode == "meeting" {
+            let lost = meeting_lost_at.get_or_insert(now);
+            if lost.elapsed() < debounce {
+                target_mode = "meeting".to_string();
+                reason = "Meeting (Grace period)".to_string();
             }
         }
 
         if target_mode != "meeting" {
+            media_paused_for_meeting = false;
             if eval.youtube_playing {
                 target_mode = "youtube".to_string();
                 reason = eval.youtube_info;
                 youtube_lost_at = None;
-            } else {
-                if current_mode == "youtube" {
-                    let lost = youtube_lost_at.get_or_insert(now);
-                    if lost.elapsed() < debounce {
-                        target_mode = "youtube".to_string();
-                        reason = "YouTube (Grace period)".to_string();
-                    }
+            } else if current_mode == "youtube" {
+                let lost = youtube_lost_at.get_or_insert(now);
+                if lost.elapsed() < debounce {
+                    target_mode = "youtube".to_string();
+                    reason = "YouTube (Grace period)".to_string();
                 }
             }
         }
@@ -1442,7 +1819,7 @@ fn run_daemon(config: Config) {
 #[command(
     name = "easyeffects-auto-preset",
     author = "Russell Milliner <russell.milliner@gmail.com>",
-    version = "0.5.2",
+    version,
     about = "Automated EasyEffects preset switcher for Voice Meetings, YouTube, Music, Movies, and Video on Linux (PipeWire / KDE Plasma)"
 )]
 struct Args {
@@ -1450,9 +1827,21 @@ struct Args {
     #[arg(short, long)]
     daemon: bool,
 
+    /// Launch the PyQt6 Settings & System Tray GUI (when invoked without flags)
+    #[arg(short, long)]
+    minimized: bool,
+
+    /// Alias for --minimized (launch GUI minimized to system tray)
+    #[arg(long)]
+    tray: bool,
+
     /// Print current loaded preset and audio state
     #[arg(short, long)]
     status: bool,
+
+    /// Alias for --status
+    #[arg(long)]
+    cli_status: bool,
 
     /// Switch output preset immediately
     #[arg(short, long)]
@@ -1480,18 +1869,40 @@ struct Args {
 }
 
 const BUNDLED_OUTPUT_PRESETS: &[(&str, &str)] = &[
-    ("Meeting-Voice-Clear", include_str!("../presets/Meeting-Voice-Clear.json")),
-    ("Meeting-Voice-Clear-Max-Level", include_str!("../presets/Meeting-Voice-Clear-Max-Level.json")),
-    ("Meeting-Voice-Deep", include_str!("../presets/Meeting-Voice-Deep.json")),
-    ("Meeting-Breath-Block-Max", include_str!("../presets/Meeting-Breath-Block-Max.json")),
-    ("Meeting-Voice-Deep-Breath-Max", include_str!("../presets/Meeting-Voice-Deep-Breath-Max.json")),
-    ("Crystal more Bass", include_str!("../presets/Crystal more Bass.json")),
-    ("Compressed-Max", include_str!("../presets/Compressed-Max.json")),
+    (
+        "Meeting-Voice-Clear",
+        include_str!("../presets/Meeting-Voice-Clear.json"),
+    ),
+    (
+        "Meeting-Voice-Clear-Max-Level",
+        include_str!("../presets/Meeting-Voice-Clear-Max-Level.json"),
+    ),
+    (
+        "Meeting-Voice-Deep",
+        include_str!("../presets/Meeting-Voice-Deep.json"),
+    ),
+    (
+        "Meeting-Breath-Block-Max",
+        include_str!("../presets/Meeting-Breath-Block-Max.json"),
+    ),
+    (
+        "Meeting-Voice-Deep-Breath-Max",
+        include_str!("../presets/Meeting-Voice-Deep-Breath-Max.json"),
+    ),
+    (
+        "Crystal more Bass",
+        include_str!("../presets/Crystal more Bass.json"),
+    ),
+    (
+        "Compressed-Max",
+        include_str!("../presets/Compressed-Max.json"),
+    ),
 ];
 
-const BUNDLED_INPUT_PRESETS: &[(&str, &str)] = &[
-    ("Meeting-Mic-Clean", include_str!("../presets/Meeting-Mic-Clean.json")),
-];
+const BUNDLED_INPUT_PRESETS: &[(&str, &str)] = &[(
+    "Meeting-Mic-Clean",
+    include_str!("../presets/Meeting-Mic-Clean.json"),
+)];
 
 fn which_exists(bin: &str) -> bool {
     Command::new("which")
@@ -1505,8 +1916,10 @@ fn which_exists(bin: &str) -> bool {
 
 pub fn install_bundled_presets_rust() -> usize {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let flatpak_dir = Path::new(&home).join(".var/app/com.github.wwmm.easyeffects/data/easyeffects");
-    let xdg_data = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| format!("{}/.local/share", home));
+    let flatpak_dir =
+        Path::new(&home).join(".var/app/com.github.wwmm.easyeffects/data/easyeffects");
+    let xdg_data =
+        std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| format!("{}/.local/share", home));
     let native_dir = Path::new(&xdg_data).join("easyeffects");
 
     let mut targets = Vec::new();
@@ -1572,12 +1985,20 @@ pub fn check_dependencies_rust() -> bool {
     println!(
         "{} pactl (PulseAudio/PipeWire CLI) [Required]: {}",
         if pactl_ok { "✅" } else { "❌" },
-        if pactl_ok { "Installed" } else { "MISSING — Install `libpulse` or `pulseaudio-utils`" }
+        if pactl_ok {
+            "Installed"
+        } else {
+            "MISSING — Install `libpulse` or `pulseaudio-utils`"
+        }
     );
     println!(
         "{} PipeWire [Recommended]: {}",
         if pw_ok { "✅" } else { "⚠️" },
-        if pw_ok { "Installed" } else { "Not found in PATH" }
+        if pw_ok {
+            "Installed"
+        } else {
+            "Not found in PATH"
+        }
     );
     ee_ok && pactl_ok
 }
@@ -1588,7 +2009,10 @@ fn main() {
 
     if args.install_presets {
         let count = install_bundled_presets_rust();
-        println!("Successfully installed {} bundled presets into EasyEffects:", count);
+        println!(
+            "Successfully installed {} bundled presets into EasyEffects:",
+            count
+        );
         for (name, _) in BUNDLED_OUTPUT_PRESETS {
             println!("  • {} (Output)", name);
         }
@@ -1604,7 +2028,10 @@ fn main() {
     }
 
     if args.check_update {
-        println!("Checking for updates (current version: v{})...", APP_VERSION);
+        println!(
+            "Checking for updates (current version: v{})...",
+            APP_VERSION
+        );
         match check_for_updates(APP_VERSION) {
             Ok(res) => {
                 println!("{}", res.message);
@@ -1649,13 +2076,19 @@ fn main() {
         }
     }
 
-    if args.status {
+    if args.status || args.cli_status {
         let cur = get_current_loaded_preset();
         let eval = evaluate_audio_streams(&config);
         println!("EasyEffects Auto Preset: v{}", APP_VERSION);
         println!("Current Loaded Preset:   {}", cur);
-        println!("Meeting Active:          {} ({})", eval.meeting_active, eval.meeting_info);
-        println!("YouTube / Media Playing: {} ({})", eval.youtube_playing, eval.youtube_info);
+        println!(
+            "Meeting Active:          {} ({})",
+            eval.meeting_active, eval.meeting_info
+        );
+        println!(
+            "YouTube / Media Playing: {} ({})",
+            eval.youtube_playing, eval.youtube_info
+        );
         std::process::exit(0);
     }
 
@@ -1674,6 +2107,18 @@ fn main() {
 
     if args.daemon {
         run_daemon(config);
+    } else if args.minimized || args.tray {
+        let gui_bin = if which_exists("easyeffects-auto-preset-gui") {
+            "easyeffects-auto-preset-gui".to_string()
+        } else {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            format!("{}/.local/bin/easyeffects-auto-preset-gui", home)
+        };
+        if Path::new(&gui_bin).exists() || which_exists(&gui_bin) {
+            let _ = Command::new(&gui_bin).arg("--minimized").status();
+        } else {
+            run_daemon(config);
+        }
     } else {
         println!("EasyEffects Auto Preset Rust CLI v{}", APP_VERSION);
         println!("Run with --daemon to start the background engine, --status to view audio state, or --check-update to check for new releases.");
@@ -1693,22 +2138,108 @@ mod tests {
         assert!(is_newer_version("v0.1.0", "v0.1.1"));
         assert!(!is_newer_version("v0.1.0", "v0.1.0"));
         assert!(!is_newer_version("v0.2.0", "v0.1.9"));
+        // S1: non-semver or malformed tags must never trigger an update or downgrade
+        assert!(!is_newer_version("v0.5.2", "nightly-test"));
+        assert!(!is_newer_version("v0.5.2", ""));
+        assert!(!is_newer_version("invalid", "v0.5.3"));
+        assert_eq!(parse_semver("1.2.3.4"), None);
     }
 
     #[test]
-    fn test_parse_github_release_json() {
+    fn test_parse_github_release_json_and_allowlist() {
         let raw = r#"{
             "tag_name": "v0.2.0",
             "html_url": "https://github.com/russellmilliner/easyeffects-auto-preset/releases/tag/v0.2.0",
-            "body": "Release notes"
+            "body": "Release notes",
+            "assets": [
+                {
+                    "name": "easyeffects-auto-preset-v0.2.0-linux-x86_64.tar.gz",
+                    "browser_download_url": "https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.2.0/easyeffects-auto-preset-v0.2.0-linux-x86_64.tar.gz"
+                },
+                {
+                    "name": "easyeffects-auto-preset-v0.2.0-linux-x86_64.tar.gz.sha256",
+                    "browser_download_url": "https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.2.0/easyeffects-auto-preset-v0.2.0-linux-x86_64.tar.gz.sha256"
+                },
+                {
+                    "name": "evil-override.tar.gz",
+                    "browser_download_url": "https://evil.example.com/evil-override.tar.gz"
+                }
+            ]
         }"#;
         let res = parse_github_release_json(raw, "0.1.0").expect("valid json");
         assert!(res.update_available);
         assert_eq!(res.current_version, "v0.1.0");
         assert_eq!(res.latest_version, "v0.2.0");
+        assert!(res
+            .tarball_download_url
+            .starts_with(ALLOWED_DOWNLOAD_PREFIX));
+        assert!(res.tarball_sha256_url.ends_with(".tar.gz.sha256"));
 
         let current = parse_github_release_json(raw, "0.2.0").expect("valid json");
         assert!(!current.update_available);
+    }
+
+    #[test]
+    fn test_sha256_verification() {
+        let tmp = create_secure_temp_dir(&std::env::temp_dir(), "ee-test-sha").expect("temp dir");
+        let file_path = tmp.join("payload.bin");
+        fs::write(&file_path, b"easyeffects-auto-preset-test").expect("write");
+        // sha256("easyeffects-auto-preset-test") = d960128f2ff296a0b44e065fa8138e0449fd20d822a5a96dc60c5ab0aa1ab7ef
+        let out = Command::new("sha256sum")
+            .arg(&file_path)
+            .output()
+            .expect("sha256sum");
+        let line = String::from_utf8_lossy(&out.stdout).to_string();
+        assert!(verify_file_sha256(&file_path, &line).is_ok());
+        assert!(verify_file_sha256(
+            &file_path,
+            "0000000000000000000000000000000000000000000000000000000000000000  payload.bin"
+        )
+        .is_err());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_config_sanitize_prevents_negative_or_nan_panic() {
+        let mut cfg = Config {
+            debounce_seconds: -5.0,
+            meeting_onset_seconds: f64::NAN,
+            check_interval_seconds: -1.0,
+            ..Config::default()
+        };
+        cfg.sanitize();
+        assert_eq!(cfg.debounce_seconds, 2.0);
+        assert_eq!(cfg.meeting_onset_seconds, 3.5);
+        assert_eq!(cfg.check_interval_seconds, 1.0);
+        let _ = Duration::from_secs_f64(cfg.debounce_seconds);
+        let _ = Duration::from_secs_f64(cfg.meeting_onset_seconds);
+        let _ = Duration::from_secs_f64(cfg.check_interval_seconds);
+    }
+
+    #[test]
+    fn test_parse_pactl_json_and_text_blocks() {
+        let sample_json = r#"[
+            {
+                "index": 42,
+                "corked": false,
+                "mute": false,
+                "properties": {
+                    "application.name": "Zen Browser",
+                    "application.process.binary": "zen",
+                    "media.name": "YouTube Music",
+                    "media.role": "music"
+                }
+            }
+        ]"#;
+        let parsed = parse_pactl_blocks(sample_json, "Sink Input #");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].get("id").map(|s| s.as_str()), Some("42"));
+        assert_eq!(parsed[0].get("Corked").map(|s| s.as_str()), Some("no"));
+        assert_eq!(parsed[0].get("Mute").map(|s| s.as_str()), Some("no"));
+        assert_eq!(
+            parsed[0].get("application.name").map(|s| s.as_str()),
+            Some("Zen Browser")
+        );
     }
 
     #[test]
@@ -1717,7 +2248,10 @@ mod tests {
 
         // 1. Native video player binary (VLC / mpv)
         let mut vlc = HashMap::new();
-        vlc.insert("application.name".to_string(), "VLC media player".to_string());
+        vlc.insert(
+            "application.name".to_string(),
+            "VLC media player".to_string(),
+        );
         vlc.insert("application.process.binary".to_string(), "vlc".to_string());
         vlc.insert("media.name".to_string(), "Interstellar.mkv".to_string());
         let vlc_res = detect_media_playback_stream(&vlc, &cfg);
@@ -1727,8 +2261,14 @@ mod tests {
         // 2. Native music player binary (Spotify / Elisa)
         let mut spotify = HashMap::new();
         spotify.insert("application.name".to_string(), "Spotify".to_string());
-        spotify.insert("application.process.binary".to_string(), "spotify".to_string());
-        spotify.insert("media.name".to_string(), "Daft Punk - Harder, Better, Faster, Stronger".to_string());
+        spotify.insert(
+            "application.process.binary".to_string(),
+            "spotify".to_string(),
+        );
+        spotify.insert(
+            "media.name".to_string(),
+            "Daft Punk - Harder, Better, Faster, Stronger".to_string(),
+        );
         assert!(detect_media_playback_stream(&spotify, &cfg).is_some());
 
         // 3. PipeWire media.role = "music" or "video" or "movie"
@@ -1747,8 +2287,14 @@ mod tests {
 
         // 5. Speech dispatcher dummy should be ignored
         let mut dummy = HashMap::new();
-        dummy.insert("application.name".to_string(), "speech-dispatcher-dummy".to_string());
-        dummy.insert("application.process.binary".to_string(), "sd_dummy".to_string());
+        dummy.insert(
+            "application.name".to_string(),
+            "speech-dispatcher-dummy".to_string(),
+        );
+        dummy.insert(
+            "application.process.binary".to_string(),
+            "sd_dummy".to_string(),
+        );
         dummy.insert("media.role".to_string(), "music".to_string());
         assert!(detect_media_playback_stream(&dummy, &cfg).is_none());
     }
@@ -1756,8 +2302,14 @@ mod tests {
     #[test]
     fn test_alert_and_notification_stream_filtering() {
         let mut teams_ding = HashMap::new();
-        teams_ding.insert("application.name".to_string(), "Teams for Linux".to_string());
-        teams_ding.insert("application.process.binary".to_string(), "teams-for-linux".to_string());
+        teams_ding.insert(
+            "application.name".to_string(),
+            "Teams for Linux".to_string(),
+        );
+        teams_ding.insert(
+            "application.process.binary".to_string(),
+            "teams-for-linux".to_string(),
+        );
         teams_ding.insert("media.role".to_string(), "event".to_string());
         teams_ding.insert("media.name".to_string(), "Playback".to_string());
         assert!(is_alert_or_notification_stream(&teams_ding));
@@ -1768,9 +2320,43 @@ mod tests {
         assert!(is_alert_or_notification_stream(&slack_ping));
 
         let mut real_call = HashMap::new();
-        real_call.insert("application.name".to_string(), "Teams for Linux".to_string());
+        real_call.insert(
+            "application.name".to_string(),
+            "Teams for Linux".to_string(),
+        );
         real_call.insert("media.role".to_string(), "communication".to_string());
         real_call.insert("media.name".to_string(), "WebRTC VoiceEngine".to_string());
         assert!(!is_alert_or_notification_stream(&real_call));
+
+        // B1: "Recording" or "Loading" must NOT match "ding"; "Shopping" or "Mapping" must NOT match "ping"
+        let mut mic_recording = HashMap::new();
+        mic_recording.insert("application.name".to_string(), "Google Chrome".to_string());
+        mic_recording.insert(
+            "media.name".to_string(),
+            "Audio Recording Stream".to_string(),
+        );
+        assert!(!is_alert_or_notification_stream(&mic_recording));
+
+        let mut shopping_stream = HashMap::new();
+        shopping_stream.insert("application.name".to_string(), "Firefox".to_string());
+        shopping_stream.insert(
+            "media.name".to_string(),
+            "Shopping & Mapping Audio".to_string(),
+        );
+        assert!(!is_alert_or_notification_stream(&shopping_stream));
+
+        // Whole-word "ding" or "ping" still matches as alert
+        let mut literal_ding = HashMap::new();
+        literal_ding.insert("media.name".to_string(), "message-ding.ogg".to_string());
+        assert!(is_alert_or_notification_stream(&literal_ding));
+
+        // B2: Amazon Chime call stream must NOT be filtered as an alert
+        let mut chime_call = HashMap::new();
+        chime_call.insert("application.name".to_string(), "Amazon Chime".to_string());
+        chime_call.insert(
+            "media.name".to_string(),
+            "Amazon Chime Voice Call".to_string(),
+        );
+        assert!(!is_alert_or_notification_stream(&chime_call));
     }
 }
