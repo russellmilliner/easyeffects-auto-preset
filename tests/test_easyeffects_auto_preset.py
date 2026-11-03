@@ -157,3 +157,62 @@ def test_headless_icon_generation(tmp_path: Path):
     for mode in ("default", "meeting", "youtube"):
         tray_icon = ee_mod.build_tray_icon(mode=mode, enabled=True, size=32)
         assert not tray_icon.isNull()
+
+
+def test_kde_plasma_volume_meter_and_mixer_streams_ignored():
+    """Verify KDE Plasma volume tray applet (PlasmaPA-VolumeMeter) and mixer VU meters never trigger meeting mode."""
+    # KDE Plasma 6 system tray volume popup VU meter stream
+    assert ee_mod.is_ignored_internal_or_meter_source_stream(
+        {
+            "application.name": "plasmashell",
+            "application.process.binary": "plasmashell",
+            "application.id": "org.kde.plasma.pa",
+            "media.name": "PlasmaPA-VolumeMeter",
+        }
+    )
+    # Stream with only PlasmaPA-VolumeMeter media.name
+    assert ee_mod.is_ignored_internal_or_meter_source_stream(
+        {
+            "application.name": "PulseAudio Volume Meter",
+            "media.name": "PlasmaPA-VolumeMeter",
+        }
+    )
+    # KDE System Settings audio page VU meter
+    assert ee_mod.is_ignored_internal_or_meter_source_stream(
+        {
+            "application.name": "System Settings",
+            "application.process.binary": "systemsettings",
+            "media.name": "RecordStream",
+        }
+    )
+    # PipeWire explicit monitor / peak-detect stream properties
+    assert ee_mod.is_ignored_internal_or_meter_source_stream(
+        {
+            "application.name": "CustomMixer",
+            "media.name": "Input Level",
+            "stream.monitor": "true",
+        }
+    )
+    # Real microphone streams from Teams, browsers, and Discord must NOT be ignored
+    assert not ee_mod.is_ignored_internal_or_meter_source_stream(
+        {
+            "application.name": "Teams for Linux",
+            "application.process.binary": "teams-for-linux",
+            "media.name": "RecordStream",
+        }
+    )
+    assert not ee_mod.is_ignored_internal_or_meter_source_stream(
+        {
+            "application.name": "Zen",
+            "application.process.binary": "zen",
+            "media.name": "AudioCallbackDriver",
+        }
+    )
+    assert not ee_mod.is_ignored_internal_or_meter_source_stream(
+        {
+            "application.name": "WEBRTC VoiceEngine",
+            "application.process.binary": "Discord",
+            "media.name": "recStream",
+        }
+    )
+

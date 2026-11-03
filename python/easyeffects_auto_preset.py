@@ -136,6 +136,51 @@ ALERT_KEYWORDS = (
     "message-new",
     "call-incoming",
     "incoming call",
+    "audio-volume-change",
+    "volume control feedback",
+)
+
+IGNORED_METER_SOURCE_BINARIES = (
+    "speech-dispatcher",
+    "sd_dummy",
+    "easyeffects",
+    "pavucontrol",
+    "pwvucontrol",
+    "plasmashell",
+    "systemsettings",
+    "kcmshell",
+    "kded5",
+    "kded6",
+    "gnome-control-center",
+    "mate-volume-control",
+    "cinnamon-settings",
+    "xfce4-pulseaudio-plugin",
+    "lxqt-config-input",
+    "helvum",
+    "qpwgraph",
+)
+
+IGNORED_METER_SOURCE_APP_KEYWORDS = (
+    "speech-dispatcher",
+    "easyeffects",
+    "pavucontrol",
+    "pwvucontrol",
+    "org.kde.plasma.pa",
+    "org.kde.plasmashell",
+    "kcm_pulseaudio",
+    "plasmapa",
+    "gnome-control-center",
+    "org.pulseaudio.pavucontrol",
+)
+
+IGNORED_METER_SOURCE_MEDIA_KEYWORDS = (
+    "peak detect",
+    "monitor",
+    "plasmapa-volumemeter",
+    "volumemeter",
+    "volume meter",
+    "level meter",
+    "easyeffects",
 )
 
 _ALERT_KEYWORD_REGEX = re.compile(
@@ -1861,7 +1906,7 @@ def pause_active_media_players() -> list[str]:
 
     for svc in services:
         svc_lower = svc.lower()
-        if any(m in svc_lower for m in ("zoom", "teams", "slack", "discord", "webex", "skype")):
+        if any(m in svc_lower for m in ("zoom", "teams", "slack", "discord", "webex", "skype", "kdeconnect")):
             continue
 
         try:
@@ -2255,6 +2300,33 @@ def is_alert_or_notification_stream(block: dict[str, str]) -> bool:
     return bool(_ALERT_KEYWORD_REGEX.search(combined))
 
 
+def is_ignored_internal_or_meter_source_stream(sc: dict[str, str]) -> bool:
+    """Return True if a source-output stream is an internal DSP/daemon stream or a desktop volume/VU level meter
+    (e.g. KDE Plasma's `PlasmaPA-VolumeMeter` when opening the system tray volume applet, `pavucontrol`'s `Peak detect`,
+    `systemsettings`, `gnome-control-center`, or PipeWire monitor streams)."""
+    app_low = sc.get("application.name", "").lower()
+    app_id_low = (sc.get("pipewire.access.portal.app_id") or sc.get("application.id") or "").lower()
+    binary = sc.get("application.process.binary", "").lower()
+    media_low = sc.get("media.name", "").lower()
+    node_low = sc.get("node.name", "").lower()
+    stream_monitor = sc.get("stream.monitor", "").lower().strip()
+    resample_peaks = sc.get("resample.peaks", "").lower().strip()
+
+    if stream_monitor in ("true", "yes", "1") or resample_peaks in ("true", "yes", "1"):
+        return True
+
+    if any(b in binary for b in IGNORED_METER_SOURCE_BINARIES):
+        return True
+
+    if any(k in app_low or k in app_id_low for k in IGNORED_METER_SOURCE_APP_KEYWORDS):
+        return True
+
+    if any(k in media_low or k in node_low for k in IGNORED_METER_SOURCE_MEDIA_KEYWORDS):
+        return True
+
+    return False
+
+
 class AudioMonitorWorker(QObject):
     """Monitors PipeWire/PulseAudio sink-inputs and source-outputs."""
 
@@ -2272,6 +2344,8 @@ class AudioMonitorWorker(QObject):
         self._meeting_lost_at = 0.0
         self._youtube_lost_at = 0.0
         self._media_paused_for_meeting = False
+        self._was_strong_meeting_signal = False
+        self._meeting_pause_guard_until = 0.0
 
     def update_config(self, new_config: dict):
         self.config = sanitize_config(new_config)
@@ -2303,18 +2377,8 @@ class AudioMonitorWorker(QObject):
             app = sc.get("application.name", "Unknown App")
             binary = sc.get("application.process.binary", "").lower()
             media = sc.get("media.name", "")
-            node = sc.get("node.name", "").lower()
-            media_low = media.lower()
 
-            if (
-                "speech-dispatcher" in binary
-                or "sd_dummy" in binary
-                or "easyeffects" in binary
-                or "pavucontrol" in binary
-                or "peak detect" in media_low
-                or "monitor" in media_low
-                or "easyeffects" in node
-            ):
+            if is_ignored_internal_or_meter_source_stream(sc):
                 continue
 
             if is_alert_or_notification_stream(sc):
@@ -2449,12 +2513,22 @@ class AudioMonitorWorker(QObject):
                     target_mode = "meeting"
                     reason = meet_info or "Voice Meeting Active"
                     self._meeting_lost_at = 0.0
-                    if self.config.get("pause_media_in_meetings", True) and not self._media_paused_for_meeting:
-                        self._media_paused_for_meeting = True
-                        paused_players = pause_active_media_players()
-                        if paused_players:
-                            print(f"Paused media application(s) during meeting: {', '.join(paused_players)}")
-                            self.media_paused.emit(paused_players)
+                    # Only pause media when a strong meeting signal (active microphone capture or communication role)
+                    # is present so notification sounds / playback-only streams never pause YouTube/media.
+                    if strong_signal:
+                        if not self._media_paused_for_meeting or not self._was_strong_meeting_signal:
+                            self._meeting_pause_guard_until = max(self._meeting_pause_guard_until, now + 5.0)
+                        if self.config.get("pause_media_in_meetings", True) and (
+                            not self._media_paused_for_meeting or now < self._meeting_pause_guard_until
+                        ):
+                            first_pause = not self._media_paused_for_meeting
+                            self._media_paused_for_meeting = True
+                            paused_players = pause_active_media_players()
+                            if paused_players:
+                                print(f"Paused media application(s) during meeting: {', '.join(paused_players)}")
+                                if first_pause:
+                                    self.media_paused.emit(paused_players)
+                    self._was_strong_meeting_signal = strong_signal
                 else:
                     if self.current_mode == "meeting":
                         if self._meeting_lost_at == 0.0:
@@ -2465,6 +2539,8 @@ class AudioMonitorWorker(QObject):
 
                 if target_mode != "meeting":
                     self._media_paused_for_meeting = False
+                    self._was_strong_meeting_signal = False
+                    self._meeting_pause_guard_until = 0.0
                     if youtube_playing:
                         target_mode = "youtube"
                         reason = yt_info or "YouTube Playback"

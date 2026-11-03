@@ -91,6 +91,51 @@ const ALERT_KEYWORDS: &[&str] = &[
     "message-new",
     "call-incoming",
     "incoming call",
+    "audio-volume-change",
+    "volume control feedback",
+];
+
+const IGNORED_METER_SOURCE_BINARIES: &[&str] = &[
+    "speech-dispatcher",
+    "sd_dummy",
+    "easyeffects",
+    "pavucontrol",
+    "pwvucontrol",
+    "plasmashell",
+    "systemsettings",
+    "kcmshell",
+    "kded5",
+    "kded6",
+    "gnome-control-center",
+    "mate-volume-control",
+    "cinnamon-settings",
+    "xfce4-pulseaudio-plugin",
+    "lxqt-config-input",
+    "helvum",
+    "qpwgraph",
+];
+
+const IGNORED_METER_SOURCE_APP_KEYWORDS: &[&str] = &[
+    "speech-dispatcher",
+    "easyeffects",
+    "pavucontrol",
+    "pwvucontrol",
+    "org.kde.plasma.pa",
+    "org.kde.plasmashell",
+    "kcm_pulseaudio",
+    "plasmapa",
+    "gnome-control-center",
+    "org.pulseaudio.pavucontrol",
+];
+
+const IGNORED_METER_SOURCE_MEDIA_KEYWORDS: &[&str] = &[
+    "peak detect",
+    "monitor",
+    "plasmapa-volumemeter",
+    "volumemeter",
+    "volume meter",
+    "level meter",
+    "easyeffects",
 ];
 
 /// Native music, movie, and video player binaries that should switch to `youtube_preset`.
@@ -693,6 +738,79 @@ pub fn is_alert_or_notification_stream(stream: &HashMap<String, String>) -> bool
     false
 }
 
+/// Returns true if a PipeWire / PulseAudio source-output stream is an internal DSP/daemon stream
+/// or a desktop volume/VU level meter (e.g., KDE Plasma's `PlasmaPA-VolumeMeter` when opening the
+/// system tray volume applet, `pavucontrol`'s `Peak detect`, `systemsettings`, or PipeWire monitor streams).
+pub fn is_ignored_internal_or_meter_source_stream(sc: &HashMap<String, String>) -> bool {
+    let app_low = sc
+        .get("application.name")
+        .cloned()
+        .unwrap_or_default()
+        .to_lowercase();
+    let app_id_low = sc
+        .get("pipewire.access.portal.app_id")
+        .or_else(|| sc.get("application.id"))
+        .cloned()
+        .unwrap_or_default()
+        .to_lowercase();
+    let binary = sc
+        .get("application.process.binary")
+        .cloned()
+        .unwrap_or_default()
+        .to_lowercase();
+    let media_low = sc
+        .get("media.name")
+        .cloned()
+        .unwrap_or_default()
+        .to_lowercase();
+    let node_low = sc
+        .get("node.name")
+        .cloned()
+        .unwrap_or_default()
+        .to_lowercase();
+    let stream_monitor = sc
+        .get("stream.monitor")
+        .cloned()
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    let resample_peaks = sc
+        .get("resample.peaks")
+        .cloned()
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+
+    if matches!(stream_monitor.as_str(), "true" | "yes" | "1")
+        || matches!(resample_peaks.as_str(), "true" | "yes" | "1")
+    {
+        return true;
+    }
+
+    if IGNORED_METER_SOURCE_BINARIES
+        .iter()
+        .any(|b| binary.contains(b))
+    {
+        return true;
+    }
+
+    if IGNORED_METER_SOURCE_APP_KEYWORDS
+        .iter()
+        .any(|k| app_low.contains(k) || app_id_low.contains(k))
+    {
+        return true;
+    }
+
+    if IGNORED_METER_SOURCE_MEDIA_KEYWORDS
+        .iter()
+        .any(|k| media_low.contains(k) || node_low.contains(k))
+    {
+        return true;
+    }
+
+    false
+}
+
 /// Inspects a single PipeWire / PulseAudio sink-input property map to determine whether
 /// it represents active YouTube, music, movie, or video playback.
 pub fn detect_media_playback_stream(
@@ -811,26 +929,9 @@ pub fn evaluate_audio_streams(config: &Config) -> AudioEvaluation {
         }
 
         let app = sc.get("application.name").cloned().unwrap_or_default();
-        let app_lower = app.to_lowercase();
-        let binary = sc
-            .get("application.process.binary")
-            .cloned()
-            .unwrap_or_default()
-            .to_lowercase();
         let media = sc.get("media.name").cloned().unwrap_or_default();
-        let media_lower = media.to_lowercase();
 
-        if binary.contains("speech-dispatcher")
-            || binary.contains("sd_dummy")
-            || binary.contains("easyeffects")
-            || binary.contains("pavucontrol")
-            || app_lower.contains("easyeffects")
-            || app_lower.contains("pavucontrol")
-        {
-            continue;
-        }
-
-        if media_lower.contains("peak detect") || media_lower.contains("monitor") {
+        if is_ignored_internal_or_meter_source_stream(&sc) {
             continue;
         }
 
@@ -2358,5 +2459,45 @@ mod tests {
             "Amazon Chime Voice Call".to_string(),
         );
         assert!(!is_alert_or_notification_stream(&chime_call));
+    }
+
+    #[test]
+    fn test_kde_plasma_volume_meter_and_mixer_streams_ignored() {
+        let mut kde_tray_meter = HashMap::new();
+        kde_tray_meter.insert("application.name".to_string(), "plasmashell".to_string());
+        kde_tray_meter.insert(
+            "application.process.binary".to_string(),
+            "plasmashell".to_string(),
+        );
+        kde_tray_meter.insert(
+            "media.name".to_string(),
+            "PlasmaPA-VolumeMeter".to_string(),
+        );
+        assert!(is_ignored_internal_or_meter_source_stream(&kde_tray_meter));
+
+        let mut kde_settings = HashMap::new();
+        kde_settings.insert(
+            "application.process.binary".to_string(),
+            "systemsettings".to_string(),
+        );
+        kde_settings.insert("media.name".to_string(), "RecordStream".to_string());
+        assert!(is_ignored_internal_or_meter_source_stream(&kde_settings));
+
+        let mut pw_monitor = HashMap::new();
+        pw_monitor.insert("application.name".to_string(), "CustomMixer".to_string());
+        pw_monitor.insert("stream.monitor".to_string(), "true".to_string());
+        assert!(is_ignored_internal_or_meter_source_stream(&pw_monitor));
+
+        let mut real_teams_mic = HashMap::new();
+        real_teams_mic.insert(
+            "application.name".to_string(),
+            "Teams for Linux".to_string(),
+        );
+        real_teams_mic.insert(
+            "application.process.binary".to_string(),
+            "teams-for-linux".to_string(),
+        );
+        real_teams_mic.insert("media.name".to_string(), "RecordStream".to_string());
+        assert!(!is_ignored_internal_or_meter_source_stream(&real_teams_mic));
     }
 }
