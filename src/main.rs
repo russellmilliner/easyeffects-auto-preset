@@ -2469,10 +2469,7 @@ mod tests {
             "application.process.binary".to_string(),
             "plasmashell".to_string(),
         );
-        kde_tray_meter.insert(
-            "media.name".to_string(),
-            "PlasmaPA-VolumeMeter".to_string(),
-        );
+        kde_tray_meter.insert("media.name".to_string(), "PlasmaPA-VolumeMeter".to_string());
         assert!(is_ignored_internal_or_meter_source_stream(&kde_tray_meter));
 
         let mut kde_settings = HashMap::new();
