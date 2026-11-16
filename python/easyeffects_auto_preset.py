@@ -83,7 +83,7 @@ AUTOSTART_FILE = _XDG_CONFIG_HOME / "autostart" / "easyeffects-auto-preset.deskt
 APP_DESKTOP_FILE = _XDG_DATA_HOME / "applications" / "easyeffects-auto-preset.desktop"
 USER_SHARED_PRESETS_DIR = _XDG_DATA_HOME / "easyeffects-auto-preset" / "presets"
 
-APP_VERSION = "0.5.3"
+APP_VERSION = "0.5.4"
 GITHUB_RELEASES_API_URL = "https://api.github.com/repos/russellmilliner/easyeffects-auto-preset/releases/latest"
 GITHUB_RELEASES_PAGE_URL = "https://github.com/russellmilliner/easyeffects-auto-preset/releases"
 ALLOWED_DOWNLOAD_PREFIX = "https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/"

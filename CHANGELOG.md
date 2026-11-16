@@ -2,6 +2,24 @@
 
 All notable changes and bumped dependencies for `russellmilliner/easyeffects-auto-preset` are documented in this file.
 
+## [v0.5.4](https://github.com/russellmilliner/easyeffects-auto-preset/releases/tag/v0.5.4) — 2026-11-15
+
+### Highlights
+- Add zero-latency hardware headset sidetone controls (Tray, Settings UI & mic-sidetone CLI via HeadsetControl) and ignore KDE Plasma volume/mixer VU meter streams.
+
+### Commits
+- feat(sidetone): add zero-latency hardware headset sidetone controls and mic-sidetone CLI (93bd25a)
+- chore(deps): update dependencies (itoa 1.0.19, syn 3.0.10) (2ebbbea)
+- style(rust): apply rustfmt formatting to src/main.rs (4d661c2)
+- fix(daemon): ignore KDE Plasma volume meter and desktop mixer source streams (238300b)
+
+### 📦 Bumped Dependencies (2 packages)
+
+| Package | Previous | Updated | Scope |
+| :--- | :--- | :--- | :--- |
+| `itoa` | `1.0.18` | **`1.0.19`** | Lockfile (`Cargo.lock`) |
+| `syn` | `3.0.9` | **`3.0.10`** | Lockfile (`Cargo.lock`) |
+
 ## [v0.5.3-deps](https://github.com/russellmilliner/easyeffects-auto-preset/releases/tag/v0.5.3-deps) — 2026-11-09
 
 ### 📦 Bumped Dependencies (2 packages)

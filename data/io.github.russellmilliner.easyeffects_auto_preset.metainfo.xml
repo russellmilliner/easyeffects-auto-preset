@@ -50,6 +50,11 @@
     <binary>easyeffects-auto-preset-gui</binary>
   </provides>
   <releases>
+    <release version="0.5.4" date="2026-11-15">
+      <description>
+        <p>Add zero-latency hardware headset sidetone controls (Tray, Settings UI &amp; mic-sidetone CLI via HeadsetControl) and ignore KDE Plasma volume/mixer VU meter streams.</p>
+      </description>
+    </release>
     <release version="0.5.3" date="2026-10-28">
       <description>
         <p>Security hardening (SHA-256 update verification, URL allowlist, Flatpak host-spawn routing), whole-word alert keyword matching, single-shot meeting media pause, locale-independent pactl JSON parsing, and desktop notification toggle.</p>
