@@ -290,3 +290,123 @@ def test_headless_mainwindow_sidetone_controls_and_dirty_state(tmp_path: Path, m
     assert saved["sidetone_percent"] == 60
     win.close()
 
+
+def test_gaming_detection_and_keeps_crystal_preset_on_call(monkeypatch):
+    """Verify gaming streams/processes are detected and keep preset on Crystal even while on a voice call."""
+    cfg = ee_mod.DEFAULT_CONFIG.copy()
+    cfg["gaming_preset"] = "Crystal"
+    cfg["meeting_preset"] = "Meeting-Voice-Clear-Max-Level"
+    cfg["default_preset"] = "Crystal"
+    cfg["meeting_onset_seconds"] = 0.0
+    assert cfg["detect_games"] is True
+
+    # 1. Native CS2 stream
+    is_game, trig, reason = ee_mod.detect_game_playback_stream(
+        {
+            "application.name": "Counter-Strike 2",
+            "application.process.binary": "cs2",
+            "media.name": "SDLAudio",
+        },
+        cfg,
+    )
+    assert is_game
+    assert "Crystal" in trig
+    assert "cs2" in reason.lower()
+
+    # 2. Proton/Wine .exe stream vs ignored Wine system daemon
+    is_proton_game, _, _ = ee_mod.detect_game_playback_stream(
+        {
+            "application.name": "Cyberpunk 2077",
+            "application.process.binary": "Cyberpunk2077.exe",
+        },
+        cfg,
+    )
+    assert is_proton_game
+    is_wine_daemon, _, _ = ee_mod.detect_game_playback_stream(
+        {
+            "application.name": "winedevice.exe",
+            "application.process.binary": "winedevice.exe",
+        },
+        cfg,
+    )
+    assert not is_wine_daemon
+
+    # 3. Steam /steamapps/common/<Game> extraction
+    assert (
+        ee_mod.extract_steam_common_game_from_args(
+            ["/home/millinr/.local/share/Steam/steamapps/common/Counter-Strike Global Offensive/game/bin/linuxsteamrt64/cs2"]
+        )
+        == "Counter-Strike Global Offensive"
+    )
+    assert (
+        ee_mod.extract_steam_common_game_from_args(
+            ["/home/millinr/.local/share/Steam/steamapps/common/SteamLinuxRuntime_sniper/pressure-vessel/bin/pv-adverb"]
+        )
+        is None
+    )
+
+    # 4. Tray icon renders gaming badge ("GAM")
+    from PyQt6.QtWidgets import QApplication
+
+    _app = QApplication.instance() or QApplication([])
+    assert _app is not None
+    tray_icon = ee_mod.build_tray_icon(mode="gaming", enabled=True, size=32)
+    assert not tray_icon.isNull()
+
+    # 5. Simulate active call (microphone recording) + active game simultaneously in AudioMonitorWorker
+    def fake_query_pactl(stream_type: str, _prefix: str):
+        if stream_type == "source-outputs":
+            return [
+                {
+                    "id": "10",
+                    "Corked": "no",
+                    "Mute": "no",
+                    "application.name": "Discord",
+                    "application.process.binary": "discord",
+                    "media.name": "WEBRTC VoiceEngine",
+                }
+            ]
+        return [
+            {
+                "id": "20",
+                "Corked": "no",
+                "Mute": "no",
+                "application.name": "Discord",
+                "application.process.binary": "discord",
+                "media.name": "Voice Call",
+                "media.role": "communication",
+            },
+            {
+                "id": "21",
+                "Corked": "no",
+                "Mute": "no",
+                "application.name": "Counter-Strike 2",
+                "application.process.binary": "cs2",
+                "media.name": "SDLAudio",
+            },
+        ]
+
+    monkeypatch.setattr(ee_mod, "query_pactl_streams", fake_query_pactl)
+    monkeypatch.setattr(ee_mod, "detect_running_game_process", lambda _c: "Counter-Strike 2")
+    monkeypatch.setattr(ee_mod, "get_current_loaded_preset", lambda: "Meeting-Voice-Clear-Max-Level")
+    applied_presets: list[tuple[str, str | None]] = []
+
+    def fake_apply_preset(out_p: str, in_p: str | None = None) -> bool:
+        applied_presets.append((out_p, in_p))
+        worker.stop()
+        return True
+
+    monkeypatch.setattr(ee_mod, "apply_preset", fake_apply_preset)
+
+    worker = ee_mod.AudioMonitorWorker(cfg)
+    raw_meeting, _yt, stream_items, _m_info, _y_info, strong = worker.scan_streams()
+    assert raw_meeting is True
+    assert strong is True
+    assert worker._last_gaming_active is True
+
+    worker.run_loop()
+    assert worker.current_mode == "gaming"
+    assert worker.last_preset == "Crystal"
+    assert applied_presets == [("Crystal", None)]
+
+

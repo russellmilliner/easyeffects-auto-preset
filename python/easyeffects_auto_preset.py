@@ -83,7 +83,7 @@ AUTOSTART_FILE = _XDG_CONFIG_HOME / "autostart" / "easyeffects-auto-preset.deskt
 APP_DESKTOP_FILE = _XDG_DATA_HOME / "applications" / "easyeffects-auto-preset.desktop"
 USER_SHARED_PRESETS_DIR = _XDG_DATA_HOME / "easyeffects-auto-preset" / "presets"
 
-APP_VERSION = "0.5.4"
+APP_VERSION = "0.5.5"
 GITHUB_RELEASES_API_URL = "https://api.github.com/repos/russellmilliner/easyeffects-auto-preset/releases/latest"
 GITHUB_RELEASES_PAGE_URL = "https://github.com/russellmilliner/easyeffects-auto-preset/releases"
 ALLOWED_DOWNLOAD_PREFIX = "https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/"
@@ -93,6 +93,7 @@ DEFAULT_CONFIG = {
     "enabled": True,
     "youtube_preset": "Crystal more Bass",
     "meeting_preset": "Compressed-Max",
+    "gaming_preset": "Crystal",
     "default_preset": "Crystal more Bass",
     "meeting_mic_preset": "Meeting-Mic-Clean",
     "apply_mic_preset": False,
@@ -102,6 +103,7 @@ DEFAULT_CONFIG = {
     "detect_microphone": True,
     "detect_communication_role": True,
     "detect_meeting_apps": True,
+    "detect_games": True,
     "detect_youtube": True,
     "detect_media_apps": True,
     "pause_media_in_meetings": True,
@@ -256,6 +258,104 @@ MEDIA_KEYWORDS = [
 
 MEDIA_ROLES = {"music", "video", "movie"}
 
+KNOWN_GAME_BINARIES = {
+    "cs2", "csgo_linux64", "hl2_linux", "dota2", "tf_linux64", "portal2_linux",
+    "left4dead2", "deadlock", "s2_linux64", "wine-preloader", "wine64-preloader",
+    "wine", "wine64", "gamescope", "retroarch", "dolphin-emu", "pcsx2", "pcsx2-qt",
+    "rpcs3", "ryujinx", "yuzu", "suyu", "cemu", "ppsspp", "duckstation", "flycast",
+    "mupen64plus", "xemu", "vita3k", "shadps4", "citra", "citra-qt", "melonds",
+    "desmume", "mgba", "snes9x", "mesen", "mednafen", "dosbox", "dosbox-staging",
+    "dosbox-x", "scummvm", "gzdoom", "uzdoom", "lzdoom", "prboom-plus", "dsda-doom",
+    "vkquake", "quakespasm", "ioquake3", "eduke32", "raze", "openmw", "openrct2",
+    "openttd", "openra", "0ad", "pyrogenesis", "wesnoth", "supertuxkart", "xonotic",
+    "xonotic-linux64-sdl", "urbanterror", "teeworlds", "ddnet", "minetest", "luanti",
+    "veloren", "prismlauncher", "polymc", "atlauncher", "modrinth-app", "lunarclient",
+    "factorio", "terraria", "tmodloader", "stardewvalley", "valheim", "valheim.x86_64",
+    "7daystodie.x86_64", "projectzomboid64", "dontstarve_steam", "hollow_knight.x86_64",
+    "celeste", "slaythespire", "balatro", "vampire_survivors", "brotato", "hades",
+    "deadcells", "rimworldlinux", "ksp.x86_64", "cities.x86_64", "stellaris",
+    "eu4", "hoi4", "ck3", "vic3", "bg3",
+}
+
+KNOWN_STANDALONE_GAME_PROCESSES = {
+    "cs2", "csgo_linux64", "hl2_linux", "dota2", "tf_linux64", "portal2_linux",
+    "left4dead2", "deadlock", "gamescope", "retroarch", "dolphin-emu", "pcsx2",
+    "pcsx2-qt", "rpcs3", "ryujinx", "yuzu", "suyu", "cemu", "ppsspp", "duckstation",
+    "flycast", "mupen64plus", "xemu", "vita3k", "shadps4", "gzdoom", "uzdoom",
+    "lzdoom", "vkquake", "ioquake3", "openmw", "supertuxkart", "xonotic",
+    "xonotic-linux64-sdl", "factorio", "terraria", "stardewvalley", "valheim.x86_64",
+}
+
+KNOWN_GAME_APP_IDS = (
+    "org.libretro.retroarch",
+    "org.dolphinemu.dolphin-emu",
+    "net.pcsx2.pcsx2",
+    "net.rpcs3.rpcs3",
+    "org.ryujinx.ryujinx",
+    "info.cemu.cemu",
+    "org.ppsspp.ppsspp",
+    "org.duckstation.duckstation",
+    "org.flycast.flycast",
+    "org.prismlauncher.prismlauncher",
+    "com.modrinth.modrinthapp",
+    "net.lutris.lutris",
+    "com.heroicgameslauncher.hgl",
+    "com.usebottles.bottles",
+    "io.itch.itch",
+    "org.scummvm.scummvm",
+    "com.dosbox_staging.dosbox-staging",
+    "org.zdoom.gzdoom",
+    "org.openmw.openmw",
+    "io.openrct2.openrct2",
+)
+
+GAME_STREAM_KEYWORDS = (
+    "counter-strike",
+    "cs2",
+    "dota 2",
+    "team fortress 2",
+    "portal 2",
+    "left 4 dead",
+    "half-life",
+    "deadlock",
+    "cyberpunk 2077",
+    "starfield",
+    "age of empires",
+    "aoe2de",
+    "pubg",
+    "wreckfest",
+    "flatout",
+    "ratchet & clank",
+    "uncharted",
+    "fmod",
+    "wwise",
+    "criware",
+    "unreal engine",
+    "sdl_audio",
+)
+
+IGNORED_WINE_SYSTEM_EXES = {
+    "services.exe",
+    "plugplay.exe",
+    "rpcss.exe",
+    "svchost.exe",
+    "winedevice.exe",
+    "explorer.exe",
+    "tabtip.exe",
+    "conhost.exe",
+    "wineboot.exe",
+    "steam.exe",
+    "steamwebhelper.exe",
+    "crashhandler.exe",
+    "crashhandler64.exe",
+    "unitycrashhandler64.exe",
+    "unitycrashhandler32.exe",
+    "iscriptevaluator.exe",
+    "vc_redist.x64.exe",
+    "vc_redist.x86.exe",
+    "dxsetup.exe",
+}
+
 
 # ==============================================================================
 # Bundled Presets Packaging & Installation
@@ -409,6 +509,23 @@ def get_embedded_presets() -> dict[str, dict[str, dict]]:
     crystal_bands = {}
     for idx, intensity in enumerate([0.0, -1.0, -2.0, -3.0, -4.0, -5.0, -6.0, -7.0, -8.0, -9.0, -10.0, -12.0, -14.0]):
         crystal_bands[f"band{idx}"] = {"bypass": False, "intensity": intensity, "mute": False}
+
+    crystal = {
+        "output": {
+            "blocklist": [],
+            "crystalizer#0": {
+                **crystal_bands,
+                "bypass": False,
+                "input-gain": 0.0,
+                "output-gain": 0.0,
+            },
+            "equalizer#0": _build_10band_eq(
+                [32.0, 64.0, 128.0, 256.0, 512.0, 1024.0, 2048.0, 4096.0, 8192.0, 16384.0],
+                [3.5, 2.0, 2.19, 1.94, 5.03, 5.11, 2.77, 1.92, 7.46, 11.5],
+            ),
+            "plugins_order": ["crystalizer#0", "equalizer#0"],
+        }
+    }
 
     crystal_more_bass = {
         "output": {
@@ -600,6 +717,7 @@ def get_embedded_presets() -> dict[str, dict[str, dict]]:
                 max_output_gain=0.0,
                 max_threshold=-1.0,
             ),
+            "Crystal": crystal,
             "Crystal more Bass": crystal_more_bass,
             "Compressed-Max": compressed_max,
         },
@@ -629,6 +747,10 @@ BUNDLED_PRESET_DESCRIPTIONS = {
     "Meeting-Voice-Deep-Breath-Max": (
         "Output",
         "Combined deep broadcast voice (+4 dB @ 125Hz, +3 dB @ 250Hz) + maximum 80% neural VAD breath suppression.",
+    ),
+    "Crystal": (
+        "Output",
+        "Crisp positional highs and tight, controlled low-end (+3.5 dB @ 32Hz, +2.0 dB @ 64Hz) ideal for gaming (even while on a call) and desktop use.",
     ),
     "Crystal more Bass": (
         "Output",
@@ -1243,6 +1365,164 @@ def detect_media_playback_stream(sk: dict[str, str], config: dict) -> tuple[bool
     return False, "None", ""
 
 
+def extract_steam_common_game_from_args(args: list[str]) -> str | None:
+    """Extract the Steam game title directory if a process argument references `/steamapps/common/<Game>/`,
+    while ignoring non-game Steam runtime/Proton/shader-cache helpers and watcher scripts."""
+    if not args:
+        return None
+
+    ignored_substrings = (
+        "cs2-mouse-profile",
+        "easyeffects-auto-preset",
+        "fossilize_replay",
+        "steamwebhelper",
+        "steamerrorreporter",
+        "gameoverlayui",
+        "srt-logger",
+        "srt-client-container",
+        "x86_64-linux-gnu-srt-launcher-service",
+    )
+    for arg in args:
+        low = arg.lower()
+        if any(ig in low for ig in ignored_substrings):
+            return None
+
+    marker = "/steamapps/common/"
+    for arg in args:
+        normalized = arg.replace("\\", "/")
+        low = normalized.lower()
+        pos = low.find(marker)
+        if pos != -1:
+            after = normalized[pos + len(marker) :]
+            game_dir = after.split("/", 1)[0].strip()
+            if not game_dir:
+                continue
+            game_low = game_dir.lower()
+            if (
+                game_low.startswith("steamlinuxruntime")
+                or game_low.startswith("proton")
+                or game_low in ("steamworks shared", "steam controller configs", "steamvr")
+            ):
+                continue
+            file_base = normalized.rsplit("/", 1)[-1].strip().lower()
+            if file_base in IGNORED_WINE_SYSTEM_EXES:
+                continue
+            return game_dir
+
+    return None
+
+
+def detect_game_playback_stream(sk: dict[str, str], config: dict) -> tuple[bool, str, str]:
+    """Check if a sink-input dict represents active game audio playback.
+
+    Returns (is_game_playing, trigger_label_for_table, detailed_reason).
+    """
+    if not config.get("detect_games", True):
+        return False, "None", ""
+
+    app = sk.get("application.name", "")
+    raw_binary = sk.get("application.process.binary", "")
+    binary = raw_binary.replace("\\", "/").rsplit("/", 1)[-1].strip().lower()
+    media = sk.get("media.name", "")
+    role = sk.get("media.role", "").lower()
+    app_id = (sk.get("pipewire.access.portal.app_id") or sk.get("application.id") or "").lower()
+
+    app_lower = app.lower()
+    media_lower = media.lower()
+
+    if (
+        "speech-dispatcher" in binary
+        or "sd_dummy" in binary
+        or "easyeffects" in binary
+        or "steamwebhelper" in binary
+        or "speech-dispatcher" in app_lower
+        or "easyeffects" in app_lower
+        or "steamwebhelper" in app_lower
+    ):
+        return False, "None", ""
+
+    display_label = f"{media} ({app})" if (media and app) else (app or media or binary or "Game")
+    gaming_preset = config.get("gaming_preset", "Crystal")
+
+    if role == "game":
+        return True, f"Gaming ({gaming_preset})", f"Game: {display_label}"
+
+    if binary in KNOWN_GAME_BINARIES:
+        return True, f"Gaming ({app or binary} -> {gaming_preset})", f"Game ({binary}): {display_label}"
+
+    if binary.endswith(".exe") and binary not in IGNORED_WINE_SYSTEM_EXES:
+        return True, f"Gaming ({binary} -> {gaming_preset})", f"Game ({binary}): {display_label}"
+
+    if app_id and any(gid in app_id for gid in KNOWN_GAME_APP_IDS):
+        return True, f"Gaming ({app or app_id} -> {gaming_preset})", f"Game App: {display_label}"
+
+    for kw in GAME_STREAM_KEYWORDS:
+        if len(kw) <= 4:
+            pat = re.compile(r"(?<![a-z0-9])" + re.escape(kw) + r"(?![a-z0-9])", re.IGNORECASE)
+            matched = bool(pat.search(app_lower) or pat.search(media_lower))
+        else:
+            matched = kw in app_lower or kw in media_lower
+        if matched:
+            return True, f"Gaming ({kw} -> {gaming_preset})", f"Game ({kw}): {display_label}"
+
+    pid_str = sk.get("application.process.id", "").strip()
+    if pid_str.isdigit():
+        cmdline_file = Path(f"/proc/{pid_str}/cmdline")
+        try:
+            if cmdline_file.is_file():
+                raw = cmdline_file.read_bytes()
+                args = [a.decode("utf-8", errors="ignore") for a in raw.split(b"\x00") if a]
+                game_name = extract_steam_common_game_from_args(args)
+                if game_name:
+                    return True, f"Gaming ({game_name} -> {gaming_preset})", f"Steam Game: {game_name}"
+        except Exception:
+            pass
+
+    return False, "None", ""
+
+
+def detect_running_game_process(config: dict) -> str | None:
+    """Check if a game process is currently running on the system (e.g., Steam games in `/steamapps/common/`,
+    `cs2-mouse-profile` active flag, or standalone game/emulator binaries in `/proc`)."""
+    if not config.get("detect_games", True):
+        return None
+
+    uid = os.getuid()
+    runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{uid}")
+    if (runtime_dir / "cs2-mouse-profile" / "active").is_file():
+        return "Counter-Strike 2"
+
+    my_pid = os.getpid()
+    try:
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            pid = int(entry.name)
+            if pid <= 1 or pid == my_pid:
+                continue
+            try:
+                if entry.stat().st_uid != uid:
+                    continue
+                raw = (entry / "cmdline").read_bytes()
+                if not raw:
+                    continue
+                args = [a.decode("utf-8", errors="ignore") for a in raw.split(b"\x00") if a]
+                if not args:
+                    continue
+                game_name = extract_steam_common_game_from_args(args)
+                if game_name:
+                    return f"Steam Game: {game_name}"
+                exe_base = args[0].replace("\\", "/").rsplit("/", 1)[-1].strip().lower()
+                if exe_base in KNOWN_STANDALONE_GAME_PROCESSES:
+                    return f"Game Process: {exe_base}"
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return None
+
+
 def generate_app_icon(path: Path, size: int = 128) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     img = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
@@ -1298,6 +1578,11 @@ def _render_tray_pixmap(mode: str = "default", enabled: bool = True, size: int =
         border_color = QColor(248, 113, 113)
         badge_color = QColor(220, 38, 38)
         badge_text = "OFF"
+    elif mode == "gaming":
+        bg_color = QColor(36, 16, 62, 248)
+        border_color = QColor(192, 132, 252)
+        badge_color = QColor(126, 34, 206)
+        badge_text = "GAM"
     elif mode == "meeting":
         bg_color = QColor(10, 44, 32, 248)
         border_color = QColor(52, 211, 153)
@@ -1335,8 +1620,22 @@ def _render_tray_pixmap(mode: str = "default", enabled: bool = True, size: int =
             2.5 * scale,
             2.5 * scale,
         )
+    elif mode == "gaming":
+        # Gamepad / controller glyph (🎮)
+        painter.setPen(QPen(QColor(255, 255, 255), max(1.4, 2.2 * scale), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.setBrush(QBrush(QColor(255, 255, 255)))
+        body_rect = QRectF(14.0 * scale, 11.0 * scale, 36.0 * scale, 19.0 * scale)
+        painter.drawRoundedRect(body_rect, 7.5 * scale, 7.5 * scale)
+        # D-pad and buttons cutout in dark violet
+        dpad_pen = QPen(bg_color, max(1.6, 2.6 * scale), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        painter.setPen(dpad_pen)
+        painter.drawLine(QPointF(20.0 * scale, 20.5 * scale), QPointF(26.0 * scale, 20.5 * scale))
+        painter.drawLine(QPointF(23.0 * scale, 17.5 * scale), QPointF(23.0 * scale, 23.5 * scale))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(bg_color))
+        painter.drawEllipse(QRectF(37.0 * scale, 16.5 * scale, 3.6 * scale, 3.6 * scale))
+        painter.drawEllipse(QRectF(41.5 * scale, 20.5 * scale, 3.6 * scale, 3.6 * scale))
     elif mode == "meeting":
-        # Microphone glyph (🎤) + sound waves
         # Sound wave arcs on left & right
         wave_pen = QPen(QColor(110, 231, 183), max(1.2, 2.2 * scale), Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
         painter.setPen(wave_pen)
@@ -2493,8 +2792,11 @@ class AudioMonitorWorker(QObject):
         super().__init__()
         self.config = sanitize_config(config)
         self._running = True
-        self.current_mode = "unknown"  # "meeting", "youtube", "default"
+        self.current_mode = "unknown"  # "gaming", "meeting", "youtube", "default"
         self.last_preset = ""
+        self._gaming_lost_at = 0.0
+        self._last_gaming_active = False
+        self._last_gaming_details = ""
         self._meeting_candidate_since = 0.0
         self._meeting_lost_at = 0.0
         self._youtube_lost_at = 0.0
@@ -2551,9 +2853,18 @@ class AudioMonitorWorker(QObject):
         meeting_active = False
         has_strong_meeting_signal = False
         youtube_playing = False
+        gaming_active = False
+        gaming_stream_seen = False
+        gaming_details = ""
         meeting_details = ""
         youtube_details = ""
         stream_items: list[dict] = []
+
+        # 0. Inspect running game processes (/proc and cs2-mouse-profile state)
+        running_game = detect_running_game_process(self.config)
+        if running_game:
+            gaming_active = True
+            gaming_details = running_game
 
         # 1. Inspect source outputs (Microphone recording)
         source_blocks = query_pactl_streams("source-outputs", "Source Output #")
@@ -2620,35 +2931,45 @@ class AudioMonitorWorker(QObject):
 
             item_trigger = "None"
             is_sk_meeting = False
+            is_sk_game = False
 
-            # Only actively playing (uncorked) streams can trigger meeting or media detection
+            # Only actively playing (uncorked) streams can trigger gaming, meeting, or media detection
             if is_playing:
-                if self.config.get("detect_communication_role", True) and role in ("communication", "phone"):
-                    is_sk_meeting = True
-                    has_strong_meeting_signal = True
-                    item_trigger = "Communication Stream"
-                else:
-                    for kw in MEETING_KEYWORDS:
-                        if kw in media.lower() or kw in app.lower():
-                            is_sk_meeting = True
-                            item_trigger = f"Meeting ({kw})"
-                            break
-                    if not is_sk_meeting and self.config.get("detect_meeting_apps", True) and binary in KNOWN_MEETING_BINARIES:
+                matched_game, game_trig_label, game_detail = detect_game_playback_stream(sk, self.config)
+                if matched_game:
+                    is_sk_game = True
+                    gaming_active = True
+                    gaming_stream_seen = True
+                    item_trigger = game_trig_label
+                    gaming_details = game_detail
+
+                if not is_sk_game:
+                    if self.config.get("detect_communication_role", True) and role in ("communication", "phone"):
                         is_sk_meeting = True
-                        item_trigger = "Meeting App (Playback)"
+                        has_strong_meeting_signal = True
+                        item_trigger = "Communication Stream"
+                    else:
+                        for kw in MEETING_KEYWORDS:
+                            if kw in media.lower() or kw in app.lower():
+                                is_sk_meeting = True
+                                item_trigger = f"Meeting ({kw})"
+                                break
+                        if not is_sk_meeting and self.config.get("detect_meeting_apps", True) and binary in KNOWN_MEETING_BINARIES:
+                            is_sk_meeting = True
+                            item_trigger = "Meeting App (Playback)"
 
-                if is_sk_meeting:
-                    meeting_active = True
-                    if not meeting_details:
-                        meeting_details = f"Meeting app: {app} ({media})"
+                    if is_sk_meeting:
+                        meeting_active = True
+                        if not meeting_details:
+                            meeting_details = f"Meeting app: {app} ({media})"
 
-                # Check YouTube, music, movie, and video playback (only when actively playing sound)
-                if not is_sk_meeting:
-                    matched_media, trig_label, media_detail = detect_media_playback_stream(sk, self.config)
-                    if matched_media:
-                        item_trigger = trig_label
-                        youtube_playing = True
-                        youtube_details = media_detail
+                    # Check YouTube, music, movie, and video playback (only when actively playing sound)
+                    if not is_sk_meeting:
+                        matched_media, trig_label, media_detail = detect_media_playback_stream(sk, self.config)
+                        if matched_media:
+                            item_trigger = trig_label
+                            youtube_playing = True
+                            youtube_details = media_detail
 
             stream_items.append({
                 "type": "Audio Playback",
@@ -2657,6 +2978,22 @@ class AudioMonitorWorker(QObject):
                 "state": "Playing" if is_playing else "Paused",
                 "trigger": item_trigger,
             })
+
+        if gaming_active and not gaming_stream_seen:
+            gaming_preset = self.config.get("gaming_preset", "Crystal")
+            stream_items.insert(
+                0,
+                {
+                    "type": "Game Process",
+                    "app": gaming_details,
+                    "media": "Active Game Session",
+                    "state": "Running",
+                    "trigger": f"Gaming ({gaming_preset})",
+                },
+            )
+
+        self._last_gaming_active = gaming_active
+        self._last_gaming_details = gaming_details
 
         return meeting_active, youtube_playing, stream_items, meeting_details, youtube_details, has_strong_meeting_signal
 
@@ -2700,37 +3037,60 @@ class AudioMonitorWorker(QObject):
 
                 target_mode = "default"
                 reason = "Idle / Default"
+                gaming_active = bool(getattr(self, "_last_gaming_active", False))
+                game_info = str(getattr(self, "_last_gaming_details", ""))
+                gaming_preset_name = self.config.get("gaming_preset", "Crystal")
 
-                # Priority: Confirmed Meeting > YouTube > Default
-                if meeting_confirmed:
-                    target_mode = "meeting"
-                    reason = meet_info or "Voice Meeting Active"
-                    self._meeting_lost_at = 0.0
-                    # Only pause media when a strong meeting signal (active microphone capture or communication role)
-                    # is present so notification sounds / playback-only streams never pause YouTube/media.
-                    if strong_signal:
-                        if not self._media_paused_for_meeting or not self._was_strong_meeting_signal:
-                            self._meeting_pause_guard_until = max(self._meeting_pause_guard_until, now + 5.0)
-                        if self.config.get("pause_media_in_meetings", True) and (
-                            not self._media_paused_for_meeting or now < self._meeting_pause_guard_until
-                        ):
-                            first_pause = not self._media_paused_for_meeting
-                            self._media_paused_for_meeting = True
-                            paused_players = pause_active_media_players()
-                            if paused_players:
-                                print(f"Paused media application(s) during meeting: {', '.join(paused_players)}")
-                                if first_pause:
-                                    self.media_paused.emit(paused_players)
-                    self._was_strong_meeting_signal = strong_signal
-                else:
-                    if self.current_mode == "meeting":
-                        if self._meeting_lost_at == 0.0:
-                            self._meeting_lost_at = now
-                        if (now - self._meeting_lost_at) < debounce:
-                            target_mode = "meeting"
-                            reason = "Meeting (Grace period)"
+                # Priority 1 (Highest): Gaming (keeps preset on `gaming_preset` e.g. "Crystal" even when on a call)
+                if gaming_active:
+                    target_mode = "gaming"
+                    self._gaming_lost_at = 0.0
+                    if meeting_confirmed or raw_meeting:
+                        reason = f"{game_info or 'Gaming'} + Call active (keeping {gaming_preset_name})"
+                        for st in stream_items:
+                            if st.get("trigger", "").startswith(("Meeting", "Communication")):
+                                st["trigger"] = f"{st['trigger']} (Overridden by Game -> {gaming_preset_name})"
+                    else:
+                        reason = game_info or "Gaming Active"
+                elif self.current_mode == "gaming":
+                    if self._gaming_lost_at == 0.0:
+                        self._gaming_lost_at = now
+                    if (now - self._gaming_lost_at) < debounce:
+                        target_mode = "gaming"
+                        reason = "Gaming (Grace period)"
 
-                if target_mode != "meeting":
+                # Priority 2: Confirmed Meeting (when not gaming)
+                if target_mode != "gaming":
+                    if meeting_confirmed:
+                        target_mode = "meeting"
+                        reason = meet_info or "Voice Meeting Active"
+                        self._meeting_lost_at = 0.0
+                        # Only pause media when a strong meeting signal (active microphone capture or communication role)
+                        # is present so notification sounds / playback-only streams never pause YouTube/media.
+                        if strong_signal:
+                            if not self._media_paused_for_meeting or not self._was_strong_meeting_signal:
+                                self._meeting_pause_guard_until = max(self._meeting_pause_guard_until, now + 5.0)
+                            if self.config.get("pause_media_in_meetings", True) and (
+                                not self._media_paused_for_meeting or now < self._meeting_pause_guard_until
+                            ):
+                                first_pause = not self._media_paused_for_meeting
+                                self._media_paused_for_meeting = True
+                                paused_players = pause_active_media_players()
+                                if paused_players:
+                                    print(f"Paused media application(s) during meeting: {', '.join(paused_players)}")
+                                    if first_pause:
+                                        self.media_paused.emit(paused_players)
+                        self._was_strong_meeting_signal = strong_signal
+                    else:
+                        if self.current_mode == "meeting":
+                            if self._meeting_lost_at == 0.0:
+                                self._meeting_lost_at = now
+                            if (now - self._meeting_lost_at) < debounce:
+                                target_mode = "meeting"
+                                reason = "Meeting (Grace period)"
+
+                # Priority 3: YouTube / Media (when neither gaming nor in a meeting)
+                if target_mode not in ("gaming", "meeting"):
                     self._media_paused_for_meeting = False
                     self._was_strong_meeting_signal = False
                     self._meeting_pause_guard_until = 0.0
@@ -2747,7 +3107,14 @@ class AudioMonitorWorker(QObject):
                                 reason = "YouTube (Grace period)"
 
                 # Determine target preset based on mode
-                if target_mode == "meeting":
+                if target_mode == "gaming":
+                    target_preset = self.config.get("gaming_preset", "Crystal")
+                    target_mic = (
+                        self.config.get("meeting_mic_preset", "")
+                        if (meeting_confirmed and self.config.get("apply_mic_preset", False))
+                        else None
+                    )
+                elif target_mode == "meeting":
                     target_preset = self.config.get("meeting_preset", "Compressed-Max")
                     target_mic = self.config.get("meeting_mic_preset", "") if self.config.get("apply_mic_preset", False) else None
                 elif target_mode == "youtube":
@@ -2964,25 +3331,33 @@ class MainWindow(QMainWindow):
         self.btn_test_meet.clicked.connect(lambda: apply_preset(self.combo_meeting.currentText()))
         grid.addWidget(self.btn_test_meet, 1, 2)
 
-        grid.addWidget(QLabel("<b>Default / Idle Preset:</b>"), 2, 0)
+        grid.addWidget(QLabel("<b>Gaming Output Preset (Overrides Calls):</b>"), 2, 0)
+        self.combo_gaming = QComboBox(grp_mapping)
+        grid.addWidget(self.combo_gaming, 2, 1)
+
+        self.btn_test_game = QPushButton("Test", grp_mapping)
+        self.btn_test_game.clicked.connect(lambda: apply_preset(self.combo_gaming.currentText()))
+        grid.addWidget(self.btn_test_game, 2, 2)
+
+        grid.addWidget(QLabel("<b>Default / Idle Preset:</b>"), 3, 0)
         self.combo_default = QComboBox(grp_mapping)
-        grid.addWidget(self.combo_default, 2, 1)
+        grid.addWidget(self.combo_default, 3, 1)
 
         self.btn_test_def = QPushButton("Test", grp_mapping)
         self.btn_test_def.clicked.connect(lambda: apply_preset(self.combo_default.currentText()))
-        grid.addWidget(self.btn_test_def, 2, 2)
+        grid.addWidget(self.btn_test_def, 3, 2)
 
         # Optional Mic preset
         self.chk_mic_preset = QCheckBox("Also apply input (mic) preset in meetings:", grp_mapping)
-        grid.addWidget(self.chk_mic_preset, 3, 0)
+        grid.addWidget(self.chk_mic_preset, 4, 0)
         self.combo_mic = QComboBox(grp_mapping)
-        grid.addWidget(self.combo_mic, 3, 1)
+        grid.addWidget(self.combo_mic, 4, 1)
 
         # Quick Bundled Presets & Refresh bar inside Preset Triggers group
         preset_tools_row = QHBoxLayout()
         self.btn_install_presets_tab1 = QPushButton("📦 Install / Restore Bundled Presets...", grp_mapping)
         self.btn_install_presets_tab1.setToolTip(
-            "Install or restore the 8 bundled Meeting-Voice and Media presets into EasyEffects"
+            "Install or restore the 9 bundled Meeting-Voice, Gaming, and Media presets into EasyEffects"
         )
         self.btn_install_presets_tab1.clicked.connect(lambda: self.open_bundled_presets_dialog(first_launch=False))
         preset_tools_row.addWidget(self.btn_install_presets_tab1)
@@ -2991,7 +3366,7 @@ class MainWindow(QMainWindow):
         self.btn_refresh_presets.clicked.connect(self._on_refresh_presets_clicked)
         preset_tools_row.addWidget(self.btn_refresh_presets)
         preset_tools_row.addStretch()
-        grid.addLayout(preset_tools_row, 4, 0, 1, 3)
+        grid.addLayout(preset_tools_row, 5, 0, 1, 3)
 
         layout_presets.addWidget(grp_mapping)
 
@@ -3062,6 +3437,10 @@ class MainWindow(QMainWindow):
         grp_detect = QGroupBox("Detection Rules", tab_presets)
         vbox_detect = QVBoxLayout(grp_detect)
 
+        self.chk_detect_games = QCheckBox(
+            "Detect games (Steam, Counter-Strike 2, Proton/Wine, emulators) && keep Gaming preset active during calls",
+            grp_detect,
+        )
         self.chk_detect_mic = QCheckBox(
             "Detect active microphone (Google Meet, Zoom, Teams, Slack, Discord)", grp_detect
         )
@@ -3077,6 +3456,7 @@ class MainWindow(QMainWindow):
             grp_detect,
         )
 
+        vbox_detect.addWidget(self.chk_detect_games)
         vbox_detect.addWidget(self.chk_detect_mic)
         vbox_detect.addWidget(self.chk_detect_comm)
         vbox_detect.addWidget(self.chk_detect_yt)
@@ -3153,18 +3533,23 @@ class MainWindow(QMainWindow):
 
         info_text = QLabel(
             "<b>How EasyEffects Auto Preset Works</b><br>"
-            "Continuously inspects active PipeWire / PulseAudio streams and switches your EasyEffects "
-            "preset automatically using a <b>3-tier priority engine</b> with grace-period debouncing:"
+            "Continuously inspects active PipeWire / PulseAudio streams and running game processes, switching your EasyEffects "
+            "preset automatically using a <b>4-tier priority engine</b> with grace-period debouncing:"
             "<ol style='margin-top:4px; margin-bottom:8px;'>"
-            "<li><b>Priority 1 — Voice Meetings (Highest):</b> Active microphone recording or meeting stream "
+            "<li><b>Priority 1 — Gaming (Highest, Overrides Calls):</b> Active game audio stream or running game process "
+            "(Steam games, Counter-Strike 2, Proton/Wine, Gamescope, emulators) — keeps your output preset on "
+            "<code>Crystal</code> even when you are simultaneously on a voice call.</li>"
+            "<li><b>Priority 2 — Voice Meetings:</b> Active microphone recording or meeting stream "
             "(Google Meet, Zoom, Teams, Slack, Discord, Webex, or <code>media.role=phone/communication</code>).</li>"
-            "<li><b>Priority 2 — YouTube, Music, Movies &amp; Video:</b> Active playback in browsers "
+            "<li><b>Priority 3 — YouTube, Music, Movies &amp; Video:</b> Active playback in browsers "
             "(YouTube, YouTube Music, Netflix, Disney+, Prime Video, Twitch, Plex, SoundCloud) or media apps "
             "(Spotify, VLC, mpv, Elisa, Haruna, Celluloid, Kodi, Jellyfin, Rhythmbox, etc.).</li>"
-            "<li><b>Priority 3 — Default / Idle:</b> Restored after the debounce delay once media/calls end.</li>"
+            "<li><b>Priority 4 — Default / Idle:</b> Restored after the debounce delay once games/media/calls end.</li>"
             "</ol>"
             "<b>Bundled EasyEffects Presets (Included with Application)</b>"
             "<ul style='margin-top:4px; margin-bottom:6px;'>"
+            "<li><b>Crystal (Gaming &amp; Desktop Output):</b> Crisp positional highs and tight, controlled low-end "
+            "(+3.5 dB @ 32Hz, +2.0 dB @ 64Hz) without voice-call dynamic compression—kept active when playing games even while on a call.</li>"
             "<li><b>Meeting-Voice-Clear (Balanced Meeting Output):</b> Warm vocal depth (+2.0 dB @ 125Hz, +1.5 dB @ 250Hz) "
             "so voices never sound like a landline telephone, combined with a steep sub-75Hz mic-thump cut "
             "(-28 dB @ 32Hz, -14 dB @ 64Hz, 75Hz HPF) and <b>RNNoise (65% VAD) + Speex (-35 dB)</b> to filter out "
@@ -3295,10 +3680,11 @@ class MainWindow(QMainWindow):
     # --------------------------------------------------------------------------
 
     def _connect_change_trackers(self):
-        for combo in (self.combo_youtube, self.combo_meeting, self.combo_default, self.combo_mic):
+        for combo in (self.combo_youtube, self.combo_meeting, self.combo_gaming, self.combo_default, self.combo_mic):
             combo.currentIndexChanged.connect(self._on_ui_modified)
         for chk in (
             self.chk_mic_preset,
+            self.chk_detect_games,
             self.chk_detect_mic,
             self.chk_detect_comm,
             self.chk_detect_yt,
@@ -3314,9 +3700,11 @@ class MainWindow(QMainWindow):
         return {
             "youtube_preset": self.combo_youtube.currentText(),
             "meeting_preset": self.combo_meeting.currentText(),
+            "gaming_preset": self.combo_gaming.currentText(),
             "default_preset": self.combo_default.currentText(),
             "meeting_mic_preset": self.combo_mic.currentText() if self.combo_mic.currentIndex() > 0 else "",
             "apply_mic_preset": self.chk_mic_preset.isChecked(),
+            "detect_games": self.chk_detect_games.isChecked(),
             "detect_microphone": self.chk_detect_mic.isChecked(),
             "detect_communication_role": self.chk_detect_comm.isChecked(),
             "detect_youtube": self.chk_detect_yt.isChecked(),
@@ -3331,9 +3719,11 @@ class MainWindow(QMainWindow):
         return {
             "youtube_preset": str(self.config.get("youtube_preset", "Crystal more Bass")),
             "meeting_preset": str(self.config.get("meeting_preset", "Compressed-Max")),
+            "gaming_preset": str(self.config.get("gaming_preset", "Crystal")),
             "default_preset": str(self.config.get("default_preset", "Crystal more Bass")),
             "meeting_mic_preset": str(self.config.get("meeting_mic_preset", "Meeting-Mic-Clean") or ""),
             "apply_mic_preset": bool(self.config.get("apply_mic_preset", False)),
+            "detect_games": bool(self.config.get("detect_games", True)),
             "detect_microphone": bool(self.config.get("detect_microphone", True)),
             "detect_communication_role": bool(self.config.get("detect_communication_role", True)),
             "detect_youtube": bool(self.config.get("detect_youtube", True)),
@@ -3410,6 +3800,7 @@ class MainWindow(QMainWindow):
             for combo, cfg_key, fallback in (
                 (self.combo_youtube, "youtube_preset", "Crystal more Bass"),
                 (self.combo_meeting, "meeting_preset", "Compressed-Max"),
+                (self.combo_gaming, "gaming_preset", "Crystal"),
                 (self.combo_default, "default_preset", "Crystal more Bass"),
             ):
                 current_selection = combo.currentText() or str(self.config.get(cfg_key, fallback))
@@ -3445,6 +3836,7 @@ class MainWindow(QMainWindow):
             for combo, key in (
                 (self.combo_youtube, "youtube_preset"),
                 (self.combo_meeting, "meeting_preset"),
+                (self.combo_gaming, "gaming_preset"),
                 (self.combo_default, "default_preset"),
             ):
                 idx = combo.findText(saved_ui[key])
@@ -3474,6 +3866,7 @@ class MainWindow(QMainWindow):
             for combo, key, fallback in (
                 (self.combo_youtube, "youtube_preset", "Crystal more Bass"),
                 (self.combo_meeting, "meeting_preset", "Compressed-Max"),
+                (self.combo_gaming, "gaming_preset", "Crystal"),
                 (self.combo_default, "default_preset", "Crystal more Bass"),
             ):
                 target = str(self.config.get(key, fallback))
@@ -3494,6 +3887,7 @@ class MainWindow(QMainWindow):
                 self.combo_mic.setCurrentIndex(0)
 
             self.chk_mic_preset.setChecked(bool(self.config.get("apply_mic_preset", False)))
+            self.chk_detect_games.setChecked(bool(self.config.get("detect_games", True)))
             self.chk_detect_mic.setChecked(bool(self.config.get("detect_microphone", True)))
             self.chk_detect_comm.setChecked(bool(self.config.get("detect_communication_role", True)))
             self.chk_detect_yt.setChecked(bool(self.config.get("detect_youtube", True)))
@@ -3829,6 +4223,7 @@ class MainWindow(QMainWindow):
             _render_tray_pixmap(mode=mode, enabled=self.config.get("enabled", True), size=48)
         )
         mode_display = {
+            "gaming": "🎮 Gaming Active [GAM]",
             "meeting": "🎤 Voice Meeting Active [MTG]",
             "youtube": "▶ YouTube / Media Playback Active [MED]",
             "default": "🎚 Idle / Default [DEF]",
@@ -4115,6 +4510,7 @@ class TrayManager(QObject):
     @pyqtSlot(str, str, list)
     def _on_worker_state_changed(self, mode: str, active_preset: str, streams: list):
         mode_str = {
+            "gaming": "Gaming",
             "meeting": "Meeting",
             "youtube": "YouTube / Media",
             "default": "Default",

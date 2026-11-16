@@ -1,7 +1,7 @@
 # EasyEffects Auto Preset
 
-[![Version](https://img.shields.io/badge/Version-v0.5.4-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/easyeffects-auto-preset/releases/tag/v0.5.4)
-[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.5.4-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.4/easyeffects-auto-preset-v0.5.4-x86_64.flatpak)
+[![Version](https://img.shields.io/badge/Version-v0.5.5-0284c7?style=for-the-badge&logo=github)](https://github.com/russellmilliner/easyeffects-auto-preset/releases/tag/v0.5.5)
+[![Flatpak Bundle](https://img.shields.io/badge/Flatpak-Download_v0.5.5-4a90d9?style=for-the-badge&logo=flatpak&logoColor=white)](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.5/easyeffects-auto-preset-v0.5.5-x86_64.flatpak)
 [![Platform: Linux x86_64](https://img.shields.io/badge/Platform-Linux%20x86__64-fcc624?style=for-the-badge&logo=linux&logoColor=black)](https://www.kernel.org/)
 [![Desktop: KDE Plasma 6](https://img.shields.io/badge/Desktop-KDE%20Plasma%206%20%2F%20Qt%206-1d99f3?style=for-the-badge&logo=kde&logoColor=white)](https://kde.org/plasma-desktop/)
 [![Audio: PipeWire](https://img.shields.io/badge/Audio-PipeWire%20%2F%20PulseAudio-e05d44?style=for-the-badge&logo=soundcharts&logoColor=white)](https://pipewire.org/)
@@ -20,13 +20,14 @@
 - **Music, Movies & YouTube** benefit from deep sub-bass extension, warm low-end punch, and sparkling highs (e.g. **`Crystal more Bass`**).
 - **Voice Meetings & Calls** (Google Meet, Zoom, Microsoft Teams, Slack, Discord, Amazon Chime, Webex) suffer when heavy bass is active: desk thumps, HVAC rumble, and male vocal proximity effect become boomy and fatiguing, while quiet and loud participants require fast dynamic leveling and speech-band clarity (e.g. **`Compressed-Max`** or **`Meeting-Voice-Clear`**).
 
-**EasyEffects Auto Preset** eliminates manual preset switching completely. Running silently in the background (or in your system tray), it inspects your live **PipeWire / PulseAudio** audio streams (`sink-inputs` and `source-outputs` via locale-independent `pactl -f json`) every second and automatically loads the right EasyEffects preset based on a **3-tier priority engine**:
+**EasyEffects Auto Preset** eliminates manual preset switching completely. Running silently in the background (or in your system tray), it inspects your live **PipeWire / PulseAudio** audio streams (`sink-inputs` and `source-outputs` via locale-independent `pactl -f json`) and running game processes every second, automatically loading the right EasyEffects preset based on a **4-tier priority engine**:
 
 | Priority | Active Context | What Triggers It | Default Preset Applied |
 | :---: | :--- | :--- | :--- |
-| **1 (Highest)** | **🎤 Voice Meeting / Call** | • Any active microphone recording stream (`source-outputs`)<br>• Native meeting apps (`zoom`, `teams`, `slack`, `discord`, `webex`, `skype`, `signal-desktop`, `telegram-desktop`)<br>• Browser tabs & streams matching `meet.google.com`, `Google Meet`, `Zoom Meeting`, `Teams Call`, `Slack Huddle`, `Discord Call`, `Amazon Chime`<br>• Any stream with `media.role` = `phone` or `communication`<br>• Sustained beyond the configurable **Meeting Onset Delay** (default `3.5s`) so transient notification chimes and brief mic probes are ignored | **`Compressed-Max`** *(or **`Meeting-Voice-Clear`**)*<br>+ optional input preset (**`Meeting-Mic-Clean`**) |
-| **2** | **▶ YouTube, Music, Movies & Video** | • **Web Browsers & Streaming**: Active audio playback (`Corked: no`) on YouTube, YouTube Music, Netflix, Disney+, Prime Video, Hulu, Max, Peacock, Paramount+, Apple TV, Crunchyroll, Twitch, Vimeo, Plex, Jellyfin, Emby, Spotify, SoundCloud, Tidal, Deezer, Qobuz, Bandcamp, Pandora, Apple Music<br>• **Native Video & Movie Players**: `vlc`, `mpv`, `celluloid`, `haruna`, `totem` (GNOME Videos), `clapper`, `showtime`, `dragon`, `kaffeine`, `smplayer`, `kodi`, `plex`, `jellyfinmediaplayer`, `stremio`, `freetube`<br>• **Native Music Players**: `spotify`, `elisa`, `strawberry`, `clementine`, `rhythmbox`, `amberol`, `lollypop`, `g4music`, `audacious`, `deadbeef`, `qmmp`, `cmus`, `mpd`, `cantata`, `amarok`, `quodlibet`, `fooyin`, `tauonmb`, `feishin`, `supersonic`, `plexamp`, `shortwave`<br>• **PipeWire Media Roles**: Any playing stream with `media.role` = `music`, `video`, or `movie` | **`Crystal more Bass`** |
-| **3 (Fallback)** | **🎵 Default / Idle** | • No active voice call and no active media playback after the configurable **debounce grace period** (default `2.0s`) expires | **`Crystal more Bass`** *(or your chosen idle preset)* |
+| **1 (Highest)** | **🎮 Gaming (Overrides Calls)** | • Active game audio stream (`media.role=game`, native Linux games like `cs2`, `dota2`, `portal2_linux`, Proton/Wine `.exe` games, Gamescope, or emulators)<br>• Running Steam game process (`/steamapps/common/<Game>/`) or `cs2-mouse-profile` active state<br>• **Overrides Voice Meeting output preset** so playing a game while on a Discord/Teams/Steam call keeps your output preset on **`Crystal`** instead of applying aggressive voice-call bass cuts and compression to game audio | **`Crystal`**<br>*(+ optional **`Meeting-Mic-Clean`** input preset if on a call)* |
+| **2** | **🎤 Voice Meeting / Call** | • Any active microphone recording stream (`source-outputs`)<br>• Native meeting apps (`zoom`, `teams`, `slack`, `discord`, `webex`, `skype`, `signal-desktop`, `telegram-desktop`)<br>• Browser tabs & streams matching `meet.google.com`, `Google Meet`, `Zoom Meeting`, `Teams Call`, `Slack Huddle`, `Discord Call`, `Amazon Chime`<br>• Any stream with `media.role` = `phone` or `communication`<br>• Sustained beyond the configurable **Meeting Onset Delay** (default `3.5s`) so transient notification chimes and brief mic probes are ignored | **`Compressed-Max`** *(or **`Meeting-Voice-Clear`**)*<br>+ optional input preset (**`Meeting-Mic-Clean`**) |
+| **3** | **▶ YouTube, Music, Movies & Video** | • **Web Browsers & Streaming**: Active audio playback (`Corked: no`) on YouTube, YouTube Music, Netflix, Disney+, Prime Video, Hulu, Max, Peacock, Paramount+, Apple TV, Crunchyroll, Twitch, Vimeo, Plex, Jellyfin, Emby, Spotify, SoundCloud, Tidal, Deezer, Qobuz, Bandcamp, Pandora, Apple Music<br>• **Native Video & Movie Players**: `vlc`, `mpv`, `celluloid`, `haruna`, `totem` (GNOME Videos), `clapper`, `showtime`, `dragon`, `kaffeine`, `smplayer`, `kodi`, `plex`, `jellyfinmediaplayer`, `stremio`, `freetube`<br>• **Native Music Players**: `spotify`, `elisa`, `strawberry`, `clementine`, `rhythmbox`, `amberol`, `lollypop`, `g4music`, `audacious`, `deadbeef`, `qmmp`, `cmus`, `mpd`, `cantata`, `amarok`, `quodlibet`, `fooyin`, `tauonmb`, `feishin`, `supersonic`, `plexamp`, `shortwave`<br>• **PipeWire Media Roles**: Any playing stream with `media.role` = `music`, `video`, or `movie` | **`Crystal more Bass`** |
+| **4 (Fallback)** | **🎵 Default / Idle** | • No active game, voice call, or media playback after the configurable **debounce grace period** (default `2.0s`) expires | **`Crystal`** / **`Crystal more Bass`** *(or your chosen idle preset)* |
 
 ### Why Smart Debouncing & Alert Filtering Matter
 - **Meeting Onset Filter (`meeting_onset_seconds`, default `3.5s`):** Short notification sounds (`media.role=event`/`notification` or whole-word alert keywords like `ding`, `ping`, `ringtone`) and brief WebRTC microphone probes are filtered out so a Slack or Teams chat message never pauses your music or switches presets.
@@ -50,19 +51,19 @@
 
 ---
 
-## 📥 Release & Downloads (`v0.5.4`)
+## 📥 Release & Downloads (`v0.5.5`)
 
 | Asset | Download Link | Description |
 | :--- | :--- | :--- |
-| **Flatpak Bundle (`x86_64`)** | [**`easyeffects-auto-preset-v0.5.4-x86_64.flatpak`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.4/easyeffects-auto-preset-v0.5.4-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.4/easyeffects-auto-preset-v0.5.4-x86_64.flatpak.sha256)) | Self-contained Flatpak bundle (`org.kde.Platform//6.11`) with bundled `PyQt6`, Rust daemon, GUI & presets |
-| **Linux Release Archive (`x86_64`)** | [**`easyeffects-auto-preset-v0.5.4-linux-x86_64.tar.gz`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.4/easyeffects-auto-preset-v0.5.4-linux-x86_64.tar.gz) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.4/easyeffects-auto-preset-v0.5.4-linux-x86_64.tar.gz.sha256)) | Native Rust daemon binary, PyQt6 GUI & tray script, custom EasyEffects presets, systemd user service & desktop entry |
-| **Standalone Rust Daemon (`x86_64`)** | [**`easyeffects-auto-preset-v0.5.4-x86_64`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.4/easyeffects-auto-preset-v0.5.4-x86_64) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.4/easyeffects-auto-preset-v0.5.4-x86_64.sha256)) | Standalone compiled Rust CLI/daemon binary |
+| **Flatpak Bundle (`x86_64`)** | [**`easyeffects-auto-preset-v0.5.5-x86_64.flatpak`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.5/easyeffects-auto-preset-v0.5.5-x86_64.flatpak) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.5/easyeffects-auto-preset-v0.5.5-x86_64.flatpak.sha256)) | Self-contained Flatpak bundle (`org.kde.Platform//6.11`) with bundled `PyQt6`, Rust daemon, GUI & presets |
+| **Linux Release Archive (`x86_64`)** | [**`easyeffects-auto-preset-v0.5.5-linux-x86_64.tar.gz`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.5/easyeffects-auto-preset-v0.5.5-linux-x86_64.tar.gz) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.5/easyeffects-auto-preset-v0.5.5-linux-x86_64.tar.gz.sha256)) | Native Rust daemon binary, PyQt6 GUI & tray script, custom EasyEffects presets, systemd user service & desktop entry |
+| **Standalone Rust Daemon (`x86_64`)** | [**`easyeffects-auto-preset-v0.5.5-x86_64`**](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.5/easyeffects-auto-preset-v0.5.5-x86_64) ([SHA-256](https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.5/easyeffects-auto-preset-v0.5.5-x86_64.sha256)) | Standalone compiled Rust CLI/daemon binary |
 
 ### Quick Flatpak Install (from GitHub Release)
 
 ```bash
-curl -LO https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.4/easyeffects-auto-preset-v0.5.4-x86_64.flatpak
-flatpak install --user -y easyeffects-auto-preset-v0.5.4-x86_64.flatpak
+curl -LO https://github.com/russellmilliner/easyeffects-auto-preset/releases/download/v0.5.5/easyeffects-auto-preset-v0.5.5-x86_64.flatpak
+flatpak install --user -y easyeffects-auto-preset-v0.5.5-x86_64.flatpak
 flatpak run io.github.russellmilliner.easyeffects_auto_preset
 ```
 
@@ -80,8 +81,9 @@ If you find EasyEffects Auto Preset helpful for your audio workflow and meetings
 
 ## ✨ Key Features
 
+- 🎮 **Automatic Gaming Detection (Keeps `Crystal` Active During Calls):** Detects active game audio streams and running Steam/Proton/Wine/native game processes (e.g., Counter-Strike 2, Cyberpunk 2077, AoE2DE, Gamescope, emulators) and keeps your output preset locked on **`Crystal`** (`gaming_preset`) even when you are simultaneously on a voice call (Discord, Teams, Steam Voice, Google Meet).
 - 🎧 **Universal Music, Movie, Video & YouTube Detection:** Automatically switches to your media preset (**`Crystal more Bass`**) whenever audio is actively playing in web browsers (YouTube, YouTube Music, Netflix, Disney+, Prime Video, Twitch, Plex, SoundCloud, etc.) or native desktop media players (Spotify, VLC, mpv, Celluloid, Haruna, Elisa, Strawberry, Rhythmbox, Amberol, Lollypop, Audacious, Kodi, Plex, Jellyfin, Stremio, FreeTube).
-- 🎤 **Automatic Voice Meeting Detection (Top Priority):** Immediately switches to **`Compressed-Max`** or **`Meeting-Voice-Clear`** (plus optional **`Meeting-Mic-Clean`** input preset) whenever a confirmed voice meeting or microphone stream is active.
+- 🎤 **Automatic Voice Meeting Detection:** Immediately switches to **`Compressed-Max`** or **`Meeting-Voice-Clear`** (plus optional **`Meeting-Mic-Clean`** input preset) whenever a confirmed voice meeting or microphone stream is active (and no game is running).
 - 🔕 **Alert & Notification Sound Filtering:** Uses whole-word regex matching and a configurable **Meeting Onset Delay (`meeting_onset_seconds`, default `3.5s`)** so brief chat notification chimes (Teams, Slack, Discord) or WebRTC microphone probes never falsely trigger meeting mode.
 - ⏸️ **Single-Shot Auto-Pause Media During Meetings (Configurable):** Automatically pauses any active MPRIS2 media applications (YouTube/browsers, Spotify, VLC, mpv, Elisa, etc.) once when a meeting is confirmed—allowing you to manually resume playback during a call if desired. Can be toggled on/off in Settings or directly from the System Tray menu.
 - 🔔 **Desktop Notifications Quick-Toggle:** Enable or silence desktop popup notifications (`show_notifications`) anytime from the main window header (`🔔 Notifications: ON` / `🔕 Notifications: OFF`), the Settings tab, or the System Tray menu.
@@ -91,6 +93,7 @@ If you find EasyEffects Auto Preset helpful for your audio workflow and meetings
   - **Native Rust CLI & Daemon (`easyeffects-auto-preset` / `easyeffects-auto-preset-daemon`):** Memory-safe, zero-overhead background engine consuming **<4MB RSS** and ~0% CPU with automatic `config.json` hot-reload.
   - **PyQt6 Settings & System Tray Manager (`python/easyeffects_auto_preset.py` / `easyeffects-auto-preset-gui`):** Full graphical settings dialog, live PipeWire stream inspector table, one-click preset testing, and tray quick-override menu.
 - 🎨 **Dynamic System Tray Status Badges:**
+  - 🟣 **`GAM` (Purple Badge):** Gaming active (keeps `Crystal` output preset active even during calls)
   - 🔵 **`MED` (Blue Badge):** YouTube, music, movie, or video playback active
   - 🟢 **`MTG` (Green Badge):** Voice meeting / call active
   - ⚪ **`DEF` (Slate Badge):** System idle / default preset
@@ -115,6 +118,7 @@ The repository includes curated presets ready to install into EasyEffects:
 | **`Meeting-Breath-Block-Max`** | Output | **Maximum Breath & Wind-Blast Suppression:** Aggressive neural breath gating (**RNNoise 100% wet, 80% VAD threshold, 40ms release** + Speex -50 dB denoise & 96% VAD start + 80Hz HPF + -38 dB compressor gate floor + tamed 4–16kHz aspiration hiss) for calls where participants breathe heavily right into their microphone. |
 | **`Meeting-Voice-Deep-Breath-Max`** | Output | **Deep Broadcast Voice + Maximum Breath Blocking:** Combines the extra +4.0 dB / +3.0 dB (125Hz / 250Hz) vocal warmth of `Meeting-Voice-Deep` with the aggressive 80% neural VAD breath suppression of `Meeting-Breath-Block-Max`. |
 | **`Meeting-Mic-Clean`** | Input | **Microphone Cleanliness:** Speex noise suppression, room dereverberation, and Automatic Gain Control (AGC) for your outbound microphone. |
+| **`Crystal`** | Output | **Gaming & Desktop:** Crisp positional highs and tight, controlled low-end (+3.5 dB at 32Hz, +2.0 dB at 64Hz) without voice-call compression—automatically kept active while playing games even on a voice call. |
 | **`Crystal more Bass`** | Output | **Media, Movies & Music:** Rich, punchy low-end response with crystalline highs, tuned for music, movies, videos, and YouTube. |
 | **`Compressed-Max`** | Output | **Maximum Leveling:** High-ratio dynamic compression + maximizer ceiling. |
 
@@ -245,6 +249,7 @@ Interactive multi-project release and sync scripts are located in the parent wor
   "enabled": true,
   "youtube_preset": "Crystal more Bass",
   "meeting_preset": "Compressed-Max",
+  "gaming_preset": "Crystal",
   "default_preset": "Crystal more Bass",
   "meeting_mic_preset": "Meeting-Mic-Clean",
   "apply_mic_preset": false,
@@ -254,6 +259,7 @@ Interactive multi-project release and sync scripts are located in the parent wor
   "detect_microphone": true,
   "detect_communication_role": true,
   "detect_meeting_apps": true,
+  "detect_games": true,
   "detect_youtube": true,
   "detect_media_apps": true,
   "pause_media_in_meetings": true,

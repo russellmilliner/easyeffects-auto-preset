@@ -2,6 +2,13 @@
 
 All notable changes and bumped dependencies for `russellmilliner/easyeffects-auto-preset` are documented in this file.
 
+## [v0.5.5](https://github.com/russellmilliner/easyeffects-auto-preset/releases/tag/v0.5.5) — 2026-11-15
+
+### Added
+- **Gaming Detection & Call Override (`gaming_preset` = `"Crystal"`, `detect_games` = `true`):** Added Priority 1 Gaming detection across both the Rust daemon (`src/main.rs`) and Python/PyQt6 manager (`python/easyeffects_auto_preset.py`). Detects active game audio streams (`media.role=game`, native Linux games like `cs2`, `dota2`, `portal2_linux`, Proton/Wine `.exe` games, Gamescope, and emulators) as well as running Steam game processes (`/steamapps/common/<Game>/`) and `cs2-mouse-profile` active state, keeping the output preset locked on **`Crystal`** even when simultaneously on a voice call (Discord, Teams, Steam Voice, Google Meet).
+- **Gaming UI Controls & `[GAM]` System Tray Badge:** Added **Gaming Output Preset (Overrides Calls)** selector + `Test` button and **Detect games** checkbox in the Settings UI, plus a purple **`GAM`** gamepad system tray badge when gaming mode is active.
+- **Bundled `Crystal` Output Preset (`presets/Crystal.json`):** Bundled `Crystal.json` alongside `Crystal more Bass.json` and the Meeting-Voice presets for one-click installation.
+
 ## [v0.5.4](https://github.com/russellmilliner/easyeffects-auto-preset/releases/tag/v0.5.4) — 2026-11-15
 
 ### Highlights

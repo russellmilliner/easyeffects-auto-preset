@@ -17,6 +17,7 @@ const DEFAULT_CONFIG_JSON: &str = r#"{
   "enabled": true,
   "youtube_preset": "Crystal more Bass",
   "meeting_preset": "Compressed-Max",
+  "gaming_preset": "Crystal",
   "default_preset": "Crystal more Bass",
   "meeting_mic_preset": "Meeting-Mic-Clean",
   "apply_mic_preset": false,
@@ -26,6 +27,7 @@ const DEFAULT_CONFIG_JSON: &str = r#"{
   "detect_microphone": true,
   "detect_communication_role": true,
   "detect_meeting_apps": true,
+  "detect_games": true,
   "detect_youtube": true,
   "detect_media_apps": true,
   "pause_media_in_meetings": true,
@@ -316,6 +318,224 @@ const MEDIA_KEYWORDS: &[&str] = &[
 /// PipeWire / PulseAudio `media.role` values that denote music, movie, or video playback.
 const MEDIA_ROLES: &[&str] = &["music", "video", "movie"];
 
+/// Native Linux & Proton/Wine game binaries that should switch to `gaming_preset` (default `"Crystal"`).
+const KNOWN_GAME_BINARIES: &[&str] = &[
+    "cs2",
+    "csgo_linux64",
+    "hl2_linux",
+    "dota2",
+    "tf_linux64",
+    "portal2_linux",
+    "left4dead2",
+    "deadlock",
+    "s2_linux64",
+    "wine-preloader",
+    "wine64-preloader",
+    "wine",
+    "wine64",
+    "gamescope",
+    "retroarch",
+    "dolphin-emu",
+    "pcsx2",
+    "pcsx2-qt",
+    "rpcs3",
+    "ryujinx",
+    "yuzu",
+    "suyu",
+    "cemu",
+    "ppsspp",
+    "duckstation",
+    "flycast",
+    "mupen64plus",
+    "xemu",
+    "vita3k",
+    "shadps4",
+    "citra",
+    "citra-qt",
+    "melonds",
+    "desmume",
+    "mgba",
+    "snes9x",
+    "mesen",
+    "mednafen",
+    "dosbox",
+    "dosbox-staging",
+    "dosbox-x",
+    "scummvm",
+    "gzdoom",
+    "uzdoom",
+    "lzdoom",
+    "prboom-plus",
+    "dsda-doom",
+    "vkquake",
+    "quakespasm",
+    "ioquake3",
+    "eduke32",
+    "raze",
+    "openmw",
+    "openrct2",
+    "openttd",
+    "openra",
+    "0ad",
+    "pyrogenesis",
+    "wesnoth",
+    "supertuxkart",
+    "xonotic",
+    "xonotic-linux64-sdl",
+    "urbanterror",
+    "teeworlds",
+    "ddnet",
+    "minetest",
+    "luanti",
+    "veloren",
+    "prismlauncher",
+    "polymc",
+    "atlauncher",
+    "modrinth-app",
+    "lunarclient",
+    "factorio",
+    "terraria",
+    "tmodloader",
+    "stardewvalley",
+    "valheim",
+    "valheim.x86_64",
+    "7daystodie.x86_64",
+    "projectzomboid64",
+    "dontstarve_steam",
+    "hollow_knight.x86_64",
+    "celeste",
+    "slaythespire",
+    "balatro",
+    "vampire_survivors",
+    "brotato",
+    "hades",
+    "deadcells",
+    "rimworldlinux",
+    "ksp.x86_64",
+    "cities.x86_64",
+    "stellaris",
+    "eu4",
+    "hoi4",
+    "ck3",
+    "vic3",
+    "bg3",
+];
+
+/// Standalone game binaries safe to match directly in `/proc/<pid>/cmdline`.
+const KNOWN_STANDALONE_GAME_PROCESSES: &[&str] = &[
+    "cs2",
+    "csgo_linux64",
+    "hl2_linux",
+    "dota2",
+    "tf_linux64",
+    "portal2_linux",
+    "left4dead2",
+    "deadlock",
+    "gamescope",
+    "retroarch",
+    "dolphin-emu",
+    "pcsx2",
+    "pcsx2-qt",
+    "rpcs3",
+    "ryujinx",
+    "yuzu",
+    "suyu",
+    "cemu",
+    "ppsspp",
+    "duckstation",
+    "flycast",
+    "mupen64plus",
+    "xemu",
+    "vita3k",
+    "shadps4",
+    "gzdoom",
+    "uzdoom",
+    "lzdoom",
+    "vkquake",
+    "ioquake3",
+    "openmw",
+    "supertuxkart",
+    "xonotic",
+    "xonotic-linux64-sdl",
+    "factorio",
+    "terraria",
+    "stardewvalley",
+    "valheim.x86_64",
+];
+
+/// Flatpak / desktop portal application IDs for games and emulators.
+const KNOWN_GAME_APP_IDS: &[&str] = &[
+    "org.libretro.retroarch",
+    "org.dolphinemu.dolphin-emu",
+    "net.pcsx2.pcsx2",
+    "net.rpcs3.rpcs3",
+    "org.ryujinx.ryujinx",
+    "info.cemu.cemu",
+    "org.ppsspp.ppsspp",
+    "org.duckstation.duckstation",
+    "org.flycast.flycast",
+    "org.prismlauncher.prismlauncher",
+    "com.modrinth.modrinthapp",
+    "net.lutris.lutris",
+    "com.heroicgameslauncher.hgl",
+    "com.usebottles.bottles",
+    "io.itch.itch",
+    "org.scummvm.scummvm",
+    "com.dosbox_staging.dosbox-staging",
+    "org.zdoom.gzdoom",
+    "org.openmw.openmw",
+    "io.openrct2.openrct2",
+];
+
+/// Keywords in `application.name` or `media.name` for game audio streams.
+const GAME_STREAM_KEYWORDS: &[&str] = &[
+    "counter-strike",
+    "cs2",
+    "dota 2",
+    "team fortress 2",
+    "portal 2",
+    "left 4 dead",
+    "half-life",
+    "deadlock",
+    "cyberpunk 2077",
+    "starfield",
+    "age of empires",
+    "aoe2de",
+    "pubg",
+    "wreckfest",
+    "flatout",
+    "ratchet & clank",
+    "uncharted",
+    "fmod",
+    "wwise",
+    "criware",
+    "unreal engine",
+    "sdl_audio",
+];
+
+/// Non-game Windows / Wine / Proton system helper `.exe` binaries to ignore.
+const IGNORED_WINE_SYSTEM_EXES: &[&str] = &[
+    "services.exe",
+    "plugplay.exe",
+    "rpcss.exe",
+    "svchost.exe",
+    "winedevice.exe",
+    "explorer.exe",
+    "tabtip.exe",
+    "conhost.exe",
+    "wineboot.exe",
+    "steam.exe",
+    "steamwebhelper.exe",
+    "crashhandler.exe",
+    "crashhandler64.exe",
+    "unitycrashhandler64.exe",
+    "unitycrashhandler32.exe",
+    "iscriptevaluator.exe",
+    "vc_redist.x64.exe",
+    "vc_redist.x86.exe",
+    "dxsetup.exe",
+];
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_true")]
@@ -324,6 +544,8 @@ pub struct Config {
     pub youtube_preset: String,
     #[serde(default = "default_meeting_preset")]
     pub meeting_preset: String,
+    #[serde(default = "default_gaming_preset")]
+    pub gaming_preset: String,
     #[serde(default = "default_youtube_preset")]
     pub default_preset: String,
     #[serde(default)]
@@ -342,6 +564,8 @@ pub struct Config {
     pub detect_communication_role: bool,
     #[serde(default = "default_true")]
     pub detect_meeting_apps: bool,
+    #[serde(default = "default_true")]
+    pub detect_games: bool,
     #[serde(default = "default_true")]
     pub detect_youtube: bool,
     #[serde(default = "default_true")]
@@ -371,6 +595,9 @@ fn default_youtube_preset() -> String {
 }
 fn default_meeting_preset() -> String {
     "Compressed-Max".to_string()
+}
+fn default_gaming_preset() -> String {
+    "Crystal".to_string()
 }
 fn default_debounce() -> f64 {
     2.0
@@ -904,23 +1131,260 @@ pub fn detect_media_playback_stream(
     None
 }
 
+/// Extracts the Steam game title directory if a process argument references `/steamapps/common/<Game>/`,
+/// while ignoring non-game Steam runtime/Proton/shader-cache helpers and watcher scripts.
+pub fn extract_steam_common_game_from_args(args: &[String]) -> Option<String> {
+    if args.is_empty() {
+        return None;
+    }
+
+    let ignored_cmd_substrings = [
+        "cs2-mouse-profile",
+        "easyeffects-auto-preset",
+        "fossilize_replay",
+        "steamwebhelper",
+        "steamerrorreporter",
+        "gameoverlayui",
+        "srt-logger",
+        "srt-client-container",
+        "x86_64-linux-gnu-srt-launcher-service",
+    ];
+    for a in args {
+        let low = a.to_lowercase();
+        if ignored_cmd_substrings.iter().any(|ig| low.contains(ig)) {
+            return None;
+        }
+    }
+
+    let marker = "/steamapps/common/";
+    for a in args {
+        let normalized = a.replace('\\', "/");
+        let low = normalized.to_lowercase();
+        if let Some(pos) = low.find(marker) {
+            let after = &normalized[pos + marker.len()..];
+            let game_dir = after.split('/').next().unwrap_or("").trim();
+            if game_dir.is_empty() {
+                continue;
+            }
+            let game_low = game_dir.to_lowercase();
+            if game_low.starts_with("steamlinuxruntime")
+                || game_low.starts_with("proton")
+                || game_low == "steamworks shared"
+                || game_low == "steam controller configs"
+                || game_low == "steamvr"
+            {
+                continue;
+            }
+
+            let file_base = normalized
+                .rsplit('/')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_lowercase();
+            if IGNORED_WINE_SYSTEM_EXES.contains(&file_base.as_str()) {
+                continue;
+            }
+            return Some(game_dir.to_string());
+        }
+    }
+
+    None
+}
+
+/// Inspects a single PipeWire / PulseAudio sink-input property map to determine whether
+/// it represents active game audio playback.
+pub fn detect_game_playback_stream(
+    sk: &HashMap<String, String>,
+    config: &Config,
+) -> Option<String> {
+    if !config.detect_games {
+        return None;
+    }
+
+    let app = sk.get("application.name").cloned().unwrap_or_default();
+    let raw_binary = sk
+        .get("application.process.binary")
+        .cloned()
+        .unwrap_or_default();
+    let binary = raw_binary
+        .replace('\\', "/")
+        .rsplit('/')
+        .next()
+        .unwrap_or(&raw_binary)
+        .trim()
+        .to_lowercase();
+    let media = sk.get("media.name").cloned().unwrap_or_default();
+    let role = sk
+        .get("media.role")
+        .cloned()
+        .unwrap_or_default()
+        .to_lowercase();
+    let app_id = sk
+        .get("pipewire.access.portal.app_id")
+        .or_else(|| sk.get("application.id"))
+        .cloned()
+        .unwrap_or_default()
+        .to_lowercase();
+
+    let app_lower = app.to_lowercase();
+    let media_lower = media.to_lowercase();
+
+    if binary.contains("speech-dispatcher")
+        || binary.contains("sd_dummy")
+        || binary.contains("easyeffects")
+        || binary.contains("steamwebhelper")
+        || app_lower.contains("speech-dispatcher")
+        || app_lower.contains("easyeffects")
+        || app_lower.contains("steamwebhelper")
+    {
+        return None;
+    }
+
+    let display_label = if !media.is_empty() && !app.is_empty() {
+        format!("{} ({})", media, app)
+    } else if !app.is_empty() {
+        app.clone()
+    } else if !media.is_empty() {
+        media.clone()
+    } else {
+        binary.clone()
+    };
+
+    if role == "game" {
+        return Some(format!("Game: {}", display_label));
+    }
+
+    if KNOWN_GAME_BINARIES.contains(&binary.as_str()) {
+        return Some(format!("Game ({}): {}", binary, display_label));
+    }
+
+    if binary.ends_with(".exe") && !IGNORED_WINE_SYSTEM_EXES.contains(&binary.as_str()) {
+        return Some(format!("Game ({}): {}", binary, display_label));
+    }
+
+    if !app_id.is_empty() && KNOWN_GAME_APP_IDS.iter().any(|id| app_id.contains(id)) {
+        return Some(format!("Game App: {}", display_label));
+    }
+
+    for kw in GAME_STREAM_KEYWORDS {
+        let matched = if kw.len() <= 4 {
+            contains_alert_keyword_word(&app_lower, kw)
+                || contains_alert_keyword_word(&media_lower, kw)
+        } else {
+            app_lower.contains(kw) || media_lower.contains(kw)
+        };
+        if matched {
+            return Some(format!("Game ({}): {}", kw, display_label));
+        }
+    }
+
+    if let Some(pid_str) = sk.get("application.process.id") {
+        if let Ok(pid) = pid_str.trim().parse::<u32>() {
+            let cmdline_path = PathBuf::from(format!("/proc/{}/cmdline", pid));
+            if let Ok(raw) = fs::read(&cmdline_path) {
+                let args: Vec<String> = raw
+                    .split(|&b| b == 0)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| String::from_utf8_lossy(s).to_string())
+                    .collect();
+                if let Some(game_name) = extract_steam_common_game_from_args(&args) {
+                    return Some(format!("Steam Game: {}", game_name));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Checks if a game process is currently running on the system (e.g., Steam games in `/steamapps/common/`,
+/// `cs2-mouse-profile` active flag, or standalone game/emulator binaries in `/proc`).
+pub fn detect_running_game_process(config: &Config) -> Option<String> {
+    if !config.detect_games {
+        return None;
+    }
+
+    let my_uid = current_euid();
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| {
+        format!(
+            "/run/user/{}",
+            my_uid
+                .map(|u| u.to_string())
+                .unwrap_or_else(|| "1000".to_string())
+        )
+    });
+    if Path::new(&runtime_dir)
+        .join("cs2-mouse-profile/active")
+        .is_file()
+    {
+        return Some("Counter-Strike 2".to_string());
+    }
+
+    let my_pid = std::process::id();
+    if let Ok(entries) = fs::read_dir("/proc") {
+        for entry in entries.flatten() {
+            if let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() {
+                if pid <= 1 || pid == my_pid || !proc_matches_uid(&entry.path(), my_uid) {
+                    continue;
+                }
+                let cmdline_path = entry.path().join("cmdline");
+                if let Ok(raw) = fs::read(&cmdline_path) {
+                    let args: Vec<String> = raw
+                        .split(|&b| b == 0)
+                        .filter(|s| !s.is_empty())
+                        .map(|s| String::from_utf8_lossy(s).to_string())
+                        .collect();
+                    if args.is_empty() {
+                        continue;
+                    }
+                    if let Some(game_name) = extract_steam_common_game_from_args(&args) {
+                        return Some(format!("Steam Game: {}", game_name));
+                    }
+                    let exe_base = args[0]
+                        .replace('\\', "/")
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(&args[0])
+                        .trim()
+                        .to_lowercase();
+                    if KNOWN_STANDALONE_GAME_PROCESSES.contains(&exe_base.as_str()) {
+                        return Some(format!("Game Process: {}", exe_base));
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 #[derive(Debug)]
 pub struct AudioEvaluation {
+    pub gaming_active: bool,
     pub meeting_active: bool,
     pub meeting_strong_signal: bool,
     pub youtube_playing: bool,
+    pub gaming_info: String,
     pub meeting_info: String,
     pub youtube_info: String,
 }
 
 pub fn evaluate_audio_streams(config: &Config) -> AudioEvaluation {
     let mut eval = AudioEvaluation {
+        gaming_active: false,
         meeting_active: false,
         meeting_strong_signal: false,
         youtube_playing: false,
+        gaming_info: String::new(),
         meeting_info: String::new(),
         youtube_info: String::new(),
     };
+
+    if let Some(game_proc) = detect_running_game_process(config) {
+        eval.gaming_active = true;
+        eval.gaming_info = game_proc;
+    }
 
     // 1. Check microphone recording (source-outputs)
     let sources = query_pactl_streams("source-outputs", "Source Output #");
@@ -1001,6 +1465,12 @@ pub fn evaluate_audio_streams(config: &Config) -> AudioEvaluation {
 
         // Ignore explicit notification / alert sounds
         if is_alert_or_notification_stream(&sk) {
+            continue;
+        }
+
+        if let Some(game_info) = detect_game_playback_stream(&sk, config) {
+            eval.gaming_active = true;
+            eval.gaming_info = game_info;
             continue;
         }
 
@@ -1777,6 +2247,7 @@ fn run_daemon(mut config: Config) {
         "EasyEffects Auto Preset Rust Daemon v{} starting...",
         APP_VERSION
     );
+    println!("  Gaming Preset:  {}", config.gaming_preset);
     println!("  YouTube Preset: {}", config.youtube_preset);
     println!("  Meeting Preset: {}", config.meeting_preset);
     println!("  Default Preset: {}", config.default_preset);
@@ -1801,6 +2272,7 @@ fn run_daemon(mut config: Config) {
     let mut last_cfg_mtime = fs::metadata(&cfg_path).and_then(|m| m.modified()).ok();
     let mut current_mode = "unknown".to_string();
     let mut last_preset = get_current_loaded_preset();
+    let mut gaming_lost_at: Option<Instant> = None;
     let mut meeting_started_at: Option<Instant> = None;
     let mut meeting_lost_at: Option<Instant> = None;
     let mut youtube_lost_at: Option<Instant> = None;
@@ -1867,29 +2339,53 @@ fn run_daemon(mut config: Config) {
             meeting_started_at = None;
         }
 
-        if confirmed_meeting {
-            target_mode = "meeting".to_string();
-            reason = eval.meeting_info;
-            meeting_lost_at = None;
-            if config.pause_media_in_meetings && !media_paused_for_meeting {
-                media_paused_for_meeting = true;
-                let paused = pause_active_media_players();
-                if !paused.is_empty() {
-                    println!(
-                        "[*] Paused active media application(s) on meeting start: {}",
-                        paused.join(", ")
-                    );
-                }
+        // Priority 1 (Highest): Gaming — keeps preset on `gaming_preset` (default "Crystal") even during calls
+        if eval.gaming_active {
+            gaming_lost_at = None;
+            target_mode = "gaming".to_string();
+            if confirmed_meeting || eval.meeting_active {
+                reason = format!(
+                    "{} + Call active (keeping {})",
+                    eval.gaming_info, config.gaming_preset
+                );
+            } else {
+                reason = eval.gaming_info;
             }
-        } else if !eval.meeting_active && current_mode == "meeting" {
-            let lost = meeting_lost_at.get_or_insert(now);
+        } else if current_mode == "gaming" {
+            let lost = gaming_lost_at.get_or_insert(now);
             if lost.elapsed() < debounce {
-                target_mode = "meeting".to_string();
-                reason = "Meeting (Grace period)".to_string();
+                target_mode = "gaming".to_string();
+                reason = "Gaming (Grace period)".to_string();
             }
         }
 
-        if target_mode != "meeting" {
+        // Priority 2: Voice Meeting (when not gaming)
+        if target_mode != "gaming" {
+            if confirmed_meeting {
+                target_mode = "meeting".to_string();
+                reason = eval.meeting_info;
+                meeting_lost_at = None;
+                if config.pause_media_in_meetings && !media_paused_for_meeting {
+                    media_paused_for_meeting = true;
+                    let paused = pause_active_media_players();
+                    if !paused.is_empty() {
+                        println!(
+                            "[*] Paused active media application(s) on meeting start: {}",
+                            paused.join(", ")
+                        );
+                    }
+                }
+            } else if !eval.meeting_active && current_mode == "meeting" {
+                let lost = meeting_lost_at.get_or_insert(now);
+                if lost.elapsed() < debounce {
+                    target_mode = "meeting".to_string();
+                    reason = "Meeting (Grace period)".to_string();
+                }
+            }
+        }
+
+        // Priority 3: YouTube / Media (when neither gaming nor in a meeting)
+        if target_mode != "gaming" && target_mode != "meeting" {
             media_paused_for_meeting = false;
             if eval.youtube_playing {
                 target_mode = "youtube".to_string();
@@ -1905,16 +2401,18 @@ fn run_daemon(mut config: Config) {
         }
 
         let target_preset = match target_mode.as_str() {
+            "gaming" => &config.gaming_preset,
             "meeting" => &config.meeting_preset,
             "youtube" => &config.youtube_preset,
             _ => &config.default_preset,
         };
 
-        let target_mic = if target_mode == "meeting" && config.apply_mic_preset {
-            Some(config.meeting_mic_preset.as_str())
-        } else {
-            None
-        };
+        let target_mic =
+            if (target_mode == "meeting" || confirmed_meeting) && config.apply_mic_preset {
+                Some(config.meeting_mic_preset.as_str())
+            } else {
+                None
+            };
 
         if target_mode != current_mode || target_preset != &last_preset {
             println!(
@@ -2005,6 +2503,7 @@ const BUNDLED_OUTPUT_PRESETS: &[(&str, &str)] = &[
         "Meeting-Voice-Deep-Breath-Max",
         include_str!("../presets/Meeting-Voice-Deep-Breath-Max.json"),
     ),
+    ("Crystal", include_str!("../presets/Crystal.json")),
     (
         "Crystal more Bass",
         include_str!("../presets/Crystal more Bass.json"),
@@ -2197,6 +2696,10 @@ fn main() {
         let eval = evaluate_audio_streams(&config);
         println!("EasyEffects Auto Preset: v{}", APP_VERSION);
         println!("Current Loaded Preset:   {}", cur);
+        println!(
+            "Gaming Active:           {} ({})",
+            eval.gaming_active, eval.gaming_info
+        );
         println!(
             "Meeting Active:          {} ({})",
             eval.meeting_active, eval.meeting_info
@@ -2541,5 +3044,62 @@ mod tests {
             "easyeffects-auto-preset".to_string(),
             "--minimized".to_string(),
         ]));
+    }
+
+    #[test]
+    fn test_detect_gaming_streams_and_steam_processes() {
+        let cfg = Config::default();
+        assert_eq!(cfg.gaming_preset, "Crystal");
+        assert!(cfg.detect_games);
+
+        // 1. Native CS2 stream
+        let mut cs2 = HashMap::new();
+        cs2.insert(
+            "application.name".to_string(),
+            "Counter-Strike 2".to_string(),
+        );
+        cs2.insert("application.process.binary".to_string(), "cs2".to_string());
+        cs2.insert("media.name".to_string(), "SDLAudio".to_string());
+        assert!(detect_game_playback_stream(&cs2, &cfg).is_some());
+
+        // 2. Proton / Wine .exe game stream
+        let mut proton_game = HashMap::new();
+        proton_game.insert("application.name".to_string(), "Cyberpunk 2077".to_string());
+        proton_game.insert(
+            "application.process.binary".to_string(),
+            "Cyberpunk2077.exe".to_string(),
+        );
+        assert!(detect_game_playback_stream(&proton_game, &cfg).is_some());
+
+        // 3. Ignored Wine system helper .exe must NOT trigger gaming
+        let mut wine_helper = HashMap::new();
+        wine_helper.insert("application.name".to_string(), "winedevice.exe".to_string());
+        wine_helper.insert(
+            "application.process.binary".to_string(),
+            "winedevice.exe".to_string(),
+        );
+        assert!(detect_game_playback_stream(&wine_helper, &cfg).is_none());
+
+        // 4. Steam /steamapps/common/<Game> cmdline extraction
+        assert_eq!(
+            extract_steam_common_game_from_args(&[
+                "/home/millinr/.local/share/Steam/steamapps/common/Counter-Strike Global Offensive/game/bin/linuxsteamrt64/cs2".to_string()
+            ]),
+            Some("Counter-Strike Global Offensive".to_string())
+        );
+        // SteamLinuxRuntime and Proton directories must NOT be treated as games by themselves
+        assert_eq!(
+            extract_steam_common_game_from_args(&[
+                "/home/millinr/.local/share/Steam/steamapps/common/SteamLinuxRuntime_sniper/pressure-vessel/bin/pv-adverb".to_string()
+            ]),
+            None
+        );
+        assert_eq!(
+            extract_steam_common_game_from_args(&[
+                "/home/millinr/.local/share/Steam/steamapps/common/Proton - Experimental/proton"
+                    .to_string()
+            ]),
+            None
+        );
     }
 }

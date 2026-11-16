@@ -50,6 +50,11 @@
     <binary>easyeffects-auto-preset-gui</binary>
   </provides>
   <releases>
+    <release version="0.5.5" date="2026-11-15">
+      <description>
+        <p>Add Priority 1 Gaming detection (Steam games, Counter-Strike 2, Proton/Wine, Gamescope, emulators) to keep the output preset on Crystal even while on a voice call, plus a [GAM] tray badge and bundled Crystal preset.</p>
+      </description>
+    </release>
     <release version="0.5.4" date="2026-11-15">
       <description>
         <p>Add zero-latency hardware headset sidetone controls (Tray, Settings UI &amp; mic-sidetone CLI via HeadsetControl) and ignore KDE Plasma volume/mixer VU meter streams.</p>
