@@ -1,0 +1,357 @@
+#!/usr/bin/env python3
+"""mic-sidetone: Zero-latency hardware microphone sidetone controller for SteelSeries Arctis headsets.
+
+Wraps HeadsetControl (`headsetcontrol`) and stays synchronized with
+~/.config/easyeffects-auto-preset/config.json.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+
+def get_config_dir() -> Path:
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    base = Path(xdg) if xdg else (Path.home() / ".config")
+    return base / "easyeffects-auto-preset"
+
+
+def get_config_file() -> Path:
+    return get_config_dir() / "config.json"
+
+
+def in_flatpak_sandbox() -> bool:
+    return Path("/.flatpak-info").exists() or bool(os.environ.get("FLATPAK_ID"))
+
+
+def clamp_int(val: object, default: int, min_val: int, max_val: int) -> int:
+    try:
+        iv = int(round(float(val)))  # type: ignore[arg-type]
+        return max(min_val, min(max_val, iv))
+    except (ValueError, TypeError):
+        return default
+
+
+def load_config() -> dict:
+    cfg_file = get_config_file()
+    data: dict = {}
+    if cfg_file.is_file():
+        try:
+            loaded = json.loads(cfg_file.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except Exception as exc:
+            print(f"Warning: could not parse {cfg_file}: {exc}", file=sys.stderr)
+    data.setdefault("sidetone_enabled", False)
+    data["sidetone_enabled"] = bool(data["sidetone_enabled"])
+    data["sidetone_percent"] = clamp_int(data.get("sidetone_percent", 40), 40, 1, 100)
+    data.setdefault("sidetone_restore_on_connect", True)
+    data["sidetone_restore_on_connect"] = bool(data["sidetone_restore_on_connect"])
+    return data
+
+
+def save_config(cfg: dict) -> None:
+    cfg_dir = get_config_dir()
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    cfg_file = get_config_file()
+    tmp_file = cfg_dir / f".config.json.tmp.{os.getpid()}"
+    try:
+        with tmp_file.open("w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+            f.write("\n")
+        os.replace(tmp_file, cfg_file)
+    except Exception:
+        tmp_file.unlink(missing_ok=True)
+        raise
+
+
+def get_headsetcontrol_cmd() -> list[str] | None:
+    """Resolve `headsetcontrol` locally or via `flatpak-spawn --host` inside Flatpak."""
+    local_bin = Path.home() / ".local" / "bin" / "headsetcontrol"
+    if local_bin.is_file() and os.access(local_bin, os.X_OK):
+        return [str(local_bin)]
+    which_bin = shutil.which("headsetcontrol")
+    if which_bin:
+        return [which_bin]
+    if in_flatpak_sandbox() and shutil.which("flatpak-spawn"):
+        try:
+            res = subprocess.run(
+                [
+                    "flatpak-spawn",
+                    "--host",
+                    "sh",
+                    "-c",
+                    'if [ -x "$HOME/.local/bin/headsetcontrol" ]; then echo "$HOME/.local/bin/headsetcontrol"; '
+                    'elif command -v headsetcontrol >/dev/null 2>&1; then command -v headsetcontrol; else exit 1; fi',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=3.0,
+            )
+            host_path = (res.stdout or "").strip()
+            if res.returncode == 0 and host_path:
+                return ["flatpak-spawn", "--host", host_path]
+        except Exception:
+            pass
+    return None
+
+
+def percent_to_raw(enabled: bool, percent: int) -> int:
+    if not enabled or percent <= 0:
+        return 0
+    clamped = max(1, min(100, int(percent)))
+    return max(1, min(128, round(clamped * 128 / 100)))
+
+
+def query_headset_status(hsc_cmd: list[str]) -> dict:
+    info = {
+        "headsetcontrol_found": True,
+        "device_name": "",
+        "product": "",
+        "connected": False,
+        "battery_status": "UNKNOWN",
+        "battery_percent": None,
+        "sidetone_capable": False,
+        "error": "",
+    }
+    try:
+        res = subprocess.run(
+            [*hsc_cmd, "-o", "json", "-b"],
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+        )
+        raw_out = (res.stdout or "").strip()
+        if raw_out:
+            payload = json.loads(raw_out)
+            devices = payload.get("devices") or []
+            if devices:
+                dev = devices[0]
+                info["device_name"] = dev.get("device") or ""
+                info["product"] = dev.get("product") or info["device_name"]
+                caps = dev.get("capabilities") or []
+                info["sidetone_capable"] = "CAP_SIDETONE" in caps
+                bat = dev.get("battery") or {}
+                bat_status = bat.get("status") or ""
+                info["battery_status"] = bat_status
+                level = bat.get("level")
+                if isinstance(level, (int, float)) and level >= 0 and bat_status != "BATTERY_UNAVAILABLE":
+                    info["battery_percent"] = int(level)
+                    info["connected"] = True
+                elif dev.get("status") == "success" and bat_status != "BATTERY_UNAVAILABLE":
+                    info["connected"] = True
+                return info
+        if res.returncode != 0:
+            info["error"] = (res.stderr or res.stdout or "").strip()
+    except subprocess.TimeoutExpired:
+        info["error"] = "Timed out querying headsetcontrol"
+    except Exception as exc:
+        info["error"] = str(exc)
+    return info
+
+
+def apply_sidetone(hsc_cmd: list[str], enabled: bool, percent: int) -> tuple[bool, int, str]:
+    raw = percent_to_raw(enabled, percent)
+    try:
+        res = subprocess.run(
+            [*hsc_cmd, f"--sidetone={raw}"],
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+        )
+        out = (res.stdout or "").strip()
+        err = (res.stderr or "").strip()
+        if res.returncode == 0:
+            return True, raw, out or "OK"
+        return False, raw, err or out or f"headsetcontrol exited with code {res.returncode}"
+    except subprocess.TimeoutExpired:
+        return False, raw, "headsetcontrol timed out after 3 seconds"
+    except Exception as exc:
+        return False, raw, str(exc)
+
+
+def send_notification(summary: str, body: str) -> None:
+    notify_bin = shutil.which("notify-send")
+    cmd: list[str] | None = [notify_bin] if notify_bin else None
+    if cmd is None and in_flatpak_sandbox() and shutil.which("flatpak-spawn"):
+        cmd = ["flatpak-spawn", "--host", "notify-send"]
+    if not cmd:
+        return
+    try:
+        subprocess.run(
+            [*cmd, "-a", "Mic Sidetone", "-i", "audio-headset", "-t", "2000", summary, body],
+            capture_output=True,
+            timeout=2.0,
+            check=False,
+        )
+    except Exception:
+        pass
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="mic-sidetone",
+        description="Zero-latency hardware microphone sidetone control for SteelSeries Arctis headsets.",
+    )
+    parser.add_argument(
+        "-n",
+        "--notify",
+        action="store_true",
+        help="Send a KDE desktop notification on state change",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output JSON (for status command)",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    p_status = sub.add_parser("status", help="Show current sidetone and headset status")
+    p_status.add_argument("--json", dest="status_json", action="store_true", help="Output JSON")
+
+    p_on = sub.add_parser("on", help="Enable hardware sidetone")
+    p_on.add_argument("percent", nargs="?", type=int, help="Optional sidetone level (1-100)")
+    p_on.add_argument("-n", "--notify", dest="sub_notify", action="store_true", help="Send desktop notification")
+
+    p_off = sub.add_parser("off", help="Disable hardware sidetone")
+    p_off.add_argument("-n", "--notify", dest="sub_notify", action="store_true", help="Send desktop notification")
+
+    p_toggle = sub.add_parser("toggle", help="Toggle hardware sidetone on/off")
+    p_toggle.add_argument("-n", "--notify", dest="sub_notify", action="store_true", help="Send desktop notification")
+
+    p_set = sub.add_parser("set", help="Set sidetone percentage (0=off, 1-100=on)")
+    p_set.add_argument("percent", type=int, help="Sidetone percentage (0-100)")
+    p_set.add_argument("-n", "--notify", dest="sub_notify", action="store_true", help="Send desktop notification")
+
+    p_up = sub.add_parser("up", help="Increase sidetone level")
+    p_up.add_argument("step", nargs="?", type=int, default=10, help="Step percentage (default: 10)")
+    p_up.add_argument("-n", "--notify", dest="sub_notify", action="store_true", help="Send desktop notification")
+
+    p_down = sub.add_parser("down", help="Decrease sidetone level")
+    p_down.add_argument("step", nargs="?", type=int, default=10, help="Step percentage (default: 10)")
+    p_down.add_argument("-n", "--notify", dest="sub_notify", action="store_true", help="Send desktop notification")
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    cmd = args.command or "status"
+    do_notify = bool(getattr(args, "notify", False) or getattr(args, "sub_notify", False))
+    want_json = bool(getattr(args, "json", False) or getattr(args, "status_json", False))
+
+    hsc_cmd = get_headsetcontrol_cmd()
+    if not hsc_cmd:
+        print(
+            "Error: 'headsetcontrol' binary not found in ~/.local/bin or PATH.",
+            file=sys.stderr,
+        )
+        return 1
+
+    cfg = load_config()
+    enabled = bool(cfg.get("sidetone_enabled", False))
+    percent = clamp_int(cfg.get("sidetone_percent", 40), 40, 1, 100)
+
+    if cmd == "status":
+        hw = query_headset_status(hsc_cmd)
+        raw = percent_to_raw(enabled, percent)
+        if want_json:
+            print(
+                json.dumps(
+                    {
+                        "sidetone_enabled": enabled,
+                        "sidetone_percent": percent,
+                        "sidetone_raw": raw,
+                        "sidetone_restore_on_connect": cfg.get("sidetone_restore_on_connect", True),
+                        "headset": hw,
+                    },
+                    indent=2,
+                )
+            )
+            return 0
+        state_str = f"ON ({percent}% / raw {raw})" if enabled else f"OFF (saved level: {percent}%)"
+        print(f"Sidetone: {state_str}")
+        if hw["device_name"]:
+            if hw["connected"] and hw["battery_percent"] is not None:
+                print(f"Headset:  {hw['product']} — Online (Battery: {hw['battery_percent']}%)")
+            elif hw["connected"]:
+                print(f"Headset:  {hw['product']} — Online")
+            else:
+                print(f"Headset:  {hw['product']} — Receiver connected, headset powered off / asleep")
+        else:
+            err_note = f" ({hw['error']})" if hw["error"] else ""
+            print(f"Headset:  Not detected{err_note}")
+        return 0
+
+    if cmd == "on":
+        if args.percent is not None:
+            if args.percent < 1 or args.percent > 100:
+                print("Error: percent for 'on' must be between 1 and 100.", file=sys.stderr)
+                return 2
+            percent = args.percent
+        enabled = True
+    elif cmd == "off":
+        enabled = False
+    elif cmd == "toggle":
+        enabled = not enabled
+    elif cmd == "set":
+        if args.percent < 0 or args.percent > 100:
+            print("Error: percent for 'set' must be between 0 and 100.", file=sys.stderr)
+            return 2
+        if args.percent == 0:
+            enabled = False
+        else:
+            enabled = True
+            percent = args.percent
+    elif cmd == "up":
+        step = max(1, min(100, args.step))
+        if not enabled:
+            enabled = True
+            percent = clamp_int(percent, 40, 1, 100)
+        else:
+            percent = min(100, percent + step)
+    elif cmd == "down":
+        step = max(1, min(100, args.step))
+        if not enabled:
+            percent = max(1, percent - step)
+        else:
+            new_pct = percent - step
+            if new_pct <= 0:
+                enabled = False
+            else:
+                percent = new_pct
+
+    cfg["sidetone_enabled"] = enabled
+    cfg["sidetone_percent"] = percent
+    save_config(cfg)
+
+    ok, raw, detail = apply_sidetone(hsc_cmd, enabled, percent)
+    if ok:
+        if enabled:
+            msg = f"Hardware sidetone ON ({percent}% / raw {raw})"
+        else:
+            msg = f"Hardware sidetone OFF (saved level: {percent}%)"
+        print(msg)
+        if do_notify:
+            send_notification(
+                "Mic Sidetone Enabled" if enabled else "Mic Sidetone Disabled",
+                f"Arctis 1 Wireless sidetone: {percent}%" if enabled else "Hardware mic monitoring muted",
+            )
+        return 0
+
+    # Hardware failed (e.g., headset sleeping or receiver unplugged), config still saved for auto-restore
+    print(f"Saved config (enabled={enabled}, percent={percent}%), but hardware apply failed: {detail}", file=sys.stderr)
+    if do_notify:
+        send_notification("Mic Sidetone Pending", f"Saved ({percent if enabled else 0}%), headset unavailable: {detail}")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

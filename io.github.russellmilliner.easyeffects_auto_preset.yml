@@ -44,9 +44,10 @@ modules:
       - cargo build --release --verbose
       - install -Dm755 target/release/easyeffects-auto-preset /app/bin/easyeffects-auto-preset-daemon
 
-      # Install GUI launcher script under both standard binary names
+      # Install GUI launcher script and mic-sidetone CLI
       - install -Dm755 python/easyeffects_auto_preset.py /app/bin/easyeffects-auto-preset-gui
       - install -Dm755 python/easyeffects_auto_preset.py /app/bin/easyeffects-auto-preset
+      - install -Dm755 python/mic-sidetone /app/bin/mic-sidetone
       
       # Install Desktop, Metainfo, and Icons
       - install -Dm644 data/io.github.russellmilliner.easyeffects_auto_preset.desktop -t /app/share/applications/

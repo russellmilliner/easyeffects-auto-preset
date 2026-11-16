@@ -216,3 +216,77 @@ def test_kde_plasma_volume_meter_and_mixer_streams_ignored():
         }
     )
 
+
+def test_sidetone_mapping_sanitization_and_cli_one_shot():
+    """Verify sidetone percent-to-raw mapping, config clamping, and --sidetone one-shot exclusion."""
+    assert ee_mod.percent_to_headsetcontrol_sidetone(False, 40) == 0
+    assert ee_mod.percent_to_headsetcontrol_sidetone(True, 0) == 0
+    assert ee_mod.percent_to_headsetcontrol_sidetone(True, 1) == 1
+    assert ee_mod.percent_to_headsetcontrol_sidetone(True, 40) == 51
+    assert ee_mod.percent_to_headsetcontrol_sidetone(True, 100) == 128
+
+    cfg_low = ee_mod.sanitize_config({"sidetone_enabled": True, "sidetone_percent": -20})
+    assert cfg_low["sidetone_enabled"] is True
+    assert cfg_low["sidetone_percent"] == 1
+    assert cfg_low["sidetone_restore_on_connect"] is True
+
+    cfg_high = ee_mod.sanitize_config({"sidetone_percent": 250, "sidetone_restore_on_connect": False})
+    assert cfg_high["sidetone_percent"] == 100
+    assert cfg_high["sidetone_restore_on_connect"] is False
+
+    assert ee_mod.is_one_shot_cli_args(["--sidetone", "toggle"])
+    assert ee_mod.is_one_shot_cli_args(["--sidetone=40"])
+    assert not ee_mod.is_one_shot_cli_args(["--minimized"])
+
+
+def test_headless_mainwindow_sidetone_controls_and_dirty_state(tmp_path: Path, monkeypatch):
+    """Verify MainWindow initializes sidetone controls cleanly without triggering unsaved-changes dirty state."""
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    assert app is not None
+
+    monkeypatch.setattr(ee_mod, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(ee_mod, "CONFIG_FILE", tmp_path / "config.json")
+    monkeypatch.setattr(ee_mod, "list_available_presets", lambda: (["Crystal more Bass", "Compressed-Max"], ["Meeting-Mic-Clean"]))
+    monkeypatch.setattr(
+        ee_mod,
+        "check_system_dependencies",
+        lambda: {"all_required_ok": True, "all_recommended_ok": True, "distro": {"name": "Test", "pkg_mgr": "pacman"}, "items": [], "combined_fix_commands": []},
+    )
+    monkeypatch.setattr(ee_mod, "is_service_enabled", lambda: True)
+    monkeypatch.setattr(
+        ee_mod,
+        "query_headset_status",
+        lambda: {"available": True, "device_name": "Arctis 1 Wireless", "connected": True, "battery_percent": 94, "sidetone_capable": True, "status_text": "Arctis 1 Wireless — Online (Battery: 94%)"},
+    )
+    applied_calls: list[tuple[bool, int]] = []
+    monkeypatch.setattr(
+        ee_mod,
+        "apply_headset_sidetone",
+        lambda enabled, pct: (applied_calls.append((enabled, pct)) or True, "OK"),
+    )
+
+    cfg = ee_mod.DEFAULT_CONFIG.copy()
+    cfg["sidetone_enabled"] = False
+    cfg["sidetone_percent"] = 40
+    worker = ee_mod.AudioMonitorWorker(cfg)
+    win = ee_mod.MainWindow(cfg, worker)
+
+    assert not win.has_unsaved_changes()
+    assert not win.chk_sidetone_enabled.isChecked()
+    assert win.slider_sidetone.value() == 40
+    assert win.lbl_sidetone_pct.text() == "40%"
+
+    win._set_sidetone_quick_level(60)
+    assert win.chk_sidetone_enabled.isChecked()
+    assert win.slider_sidetone.value() == 60
+    assert win.lbl_sidetone_pct.text() == "60%"
+    assert applied_calls == [(True, 60)]
+    assert not win.has_unsaved_changes()
+
+    saved = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert saved["sidetone_enabled"] is True
+    assert saved["sidetone_percent"] == 60
+    win.close()
+

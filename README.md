@@ -85,6 +85,7 @@ If you find EasyEffects Auto Preset helpful for your audio workflow and meetings
 - 🔕 **Alert & Notification Sound Filtering:** Uses whole-word regex matching and a configurable **Meeting Onset Delay (`meeting_onset_seconds`, default `3.5s`)** so brief chat notification chimes (Teams, Slack, Discord) or WebRTC microphone probes never falsely trigger meeting mode.
 - ⏸️ **Single-Shot Auto-Pause Media During Meetings (Configurable):** Automatically pauses any active MPRIS2 media applications (YouTube/browsers, Spotify, VLC, mpv, Elisa, etc.) once when a meeting is confirmed—allowing you to manually resume playback during a call if desired. Can be toggled on/off in Settings or directly from the System Tray menu.
 - 🔔 **Desktop Notifications Quick-Toggle:** Enable or silence desktop popup notifications (`show_notifications`) anytime from the main window header (`🔔 Notifications: ON` / `🔕 Notifications: OFF`), the Settings tab, or the System Tray menu.
+- 🎧 **Zero-Latency Hardware Headset Sidetone (`headsetcontrol` & `mic-sidetone` CLI):** Control hardware DSP microphone monitoring directly on supported USB headsets (e.g., SteelSeries Arctis 1 Wireless) from the System Tray toggle & **`🎧 Sidetone Level...`** submenu, the **Preset Triggers** slider & quick presets, `easyeffects-auto-preset --sidetone <on|off|toggle|0-100>`, or the standalone `mic-sidetone` CLI—with automatic wake/power-on restore and desktop mixer/KDE Plasma volume applet VU meter filtering (`PlasmaPA-VolumeMeter`).
 - 🔄 **Smart Grace-Period Debouncing:** Configurable delay (default `2.0s`, clamped safely to `0.0..=60.0s`) prevents abrupt preset flapping during track changes, video buffering, or brief pauses in conversation.
 - 🦀 **Dual Architecture (Rust + Python/Qt6):**
   - **Native Rust CLI & Daemon (`easyeffects-auto-preset` / `easyeffects-auto-preset-daemon`):** Memory-safe, zero-overhead background engine consuming **<4MB RSS** and ~0% CPU with automatic `config.json` hot-reload.
@@ -180,6 +181,11 @@ python3 python/easyeffects_auto_preset.py --check-deps
 # Check for updates or self-update (SHA-256 verified) from the CLI
 python3 python/easyeffects_auto_preset.py --check-update
 python3 python/easyeffects_auto_preset.py --self-update
+
+# Toggle or set zero-latency hardware headset sidetone via HeadsetControl
+python3 python/easyeffects_auto_preset.py --sidetone toggle
+python3 python/mic-sidetone status
+python3 python/mic-sidetone on 40
 ```
 
 ### Option 3: Systemd User Service (Autostart on Login)
@@ -253,7 +259,10 @@ Interactive multi-project release and sync scripts are located in the parent wor
   "pause_media_in_meetings": true,
   "show_notifications": true,
   "minimize_on_startup": true,
-  "check_updates_on_startup": true
+  "check_updates_on_startup": true,
+  "sidetone_enabled": false,
+  "sidetone_percent": 40,
+  "sidetone_restore_on_connect": true
 }
 ```
 

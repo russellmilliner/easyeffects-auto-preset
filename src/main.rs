@@ -30,7 +30,10 @@ const DEFAULT_CONFIG_JSON: &str = r#"{
   "detect_media_apps": true,
   "pause_media_in_meetings": true,
   "show_notifications": true,
-  "check_updates_on_startup": true
+  "check_updates_on_startup": true,
+  "sidetone_enabled": false,
+  "sidetone_percent": 40,
+  "sidetone_restore_on_connect": true
 }"#;
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -349,10 +352,19 @@ pub struct Config {
     pub show_notifications: bool,
     #[serde(default = "default_true")]
     pub check_updates_on_startup: bool,
+    #[serde(default)]
+    pub sidetone_enabled: bool,
+    #[serde(default = "default_sidetone_percent")]
+    pub sidetone_percent: u8,
+    #[serde(default = "default_true")]
+    pub sidetone_restore_on_connect: bool,
 }
 
 fn default_true() -> bool {
     true
+}
+fn default_sidetone_percent() -> u8 {
+    40
 }
 fn default_youtube_preset() -> String {
     "Crystal more Bass".to_string()
@@ -411,6 +423,7 @@ impl Config {
         } else {
             self.check_interval_seconds = self.check_interval_seconds.min(30.0);
         }
+        self.sidetone_percent = self.sidetone_percent.clamp(1, 100);
     }
 }
 
@@ -1628,24 +1641,26 @@ pub fn is_our_app_cmdline(args: &[String]) -> bool {
     }
 
     let is_one_shot = args.iter().skip(1).any(|a| {
-        matches!(
-            a.as_str(),
-            "--status"
-                | "-s"
-                | "--cli-status"
-                | "--switch"
-                | "--list-presets"
-                | "-l"
-                | "--install-presets"
-                | "--check-deps"
-                | "--check-update"
-                | "-u"
-                | "--self-update"
-                | "--version"
-                | "-V"
-                | "--help"
-                | "-h"
-        )
+        a == "--sidetone"
+            || a.starts_with("--sidetone=")
+            || matches!(
+                a.as_str(),
+                "--status"
+                    | "-s"
+                    | "--cli-status"
+                    | "--switch"
+                    | "--list-presets"
+                    | "-l"
+                    | "--install-presets"
+                    | "--check-deps"
+                    | "--check-update"
+                    | "-u"
+                    | "--self-update"
+                    | "--version"
+                    | "-V"
+                    | "--help"
+                    | "-h"
+            )
     });
     !is_one_shot
 }
@@ -2496,5 +2511,35 @@ mod tests {
         );
         real_teams_mic.insert("media.name".to_string(), "RecordStream".to_string());
         assert!(!is_ignored_internal_or_meter_source_stream(&real_teams_mic));
+    }
+
+    #[test]
+    fn test_sidetone_config_defaults_and_one_shot_cmdline() {
+        let mut cfg = Config {
+            sidetone_percent: 250,
+            ..Config::default()
+        };
+        cfg.sanitize();
+        assert_eq!(cfg.sidetone_percent, 100);
+        assert!(!cfg.sidetone_enabled);
+        assert!(cfg.sidetone_restore_on_connect);
+
+        cfg.sidetone_percent = 0;
+        cfg.sanitize();
+        assert_eq!(cfg.sidetone_percent, 1);
+
+        assert!(!is_our_app_cmdline(&[
+            "easyeffects-auto-preset".to_string(),
+            "--sidetone".to_string(),
+            "toggle".to_string(),
+        ]));
+        assert!(!is_our_app_cmdline(&[
+            "easyeffects-auto-preset".to_string(),
+            "--sidetone=40".to_string(),
+        ]));
+        assert!(is_our_app_cmdline(&[
+            "easyeffects-auto-preset".to_string(),
+            "--minimized".to_string(),
+        ]));
     }
 }

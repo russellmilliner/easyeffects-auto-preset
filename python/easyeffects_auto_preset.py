@@ -32,6 +32,7 @@ import urllib.request
 from PyQt6.QtCore import QObject, QPointF, QRectF, Qt, QThread, QTimer, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
     QAction,
+    QActionGroup,
     QBrush,
     QColor,
     QDesktopServices,
@@ -61,6 +62,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSlider,
     QSystemTrayIcon,
     QTabWidget,
     QTableWidget,
@@ -107,6 +109,9 @@ DEFAULT_CONFIG = {
     "minimize_on_startup": True,
     "check_updates_on_startup": True,
     "bundled_presets_prompted": False,
+    "sidetone_enabled": False,
+    "sidetone_percent": 40,
+    "sidetone_restore_on_connect": True,
 }
 
 KNOWN_MEETING_BINARIES = {
@@ -823,6 +828,123 @@ def is_flatpak_easyeffects_installed() -> bool:
         return False
 
 
+def get_headsetcontrol_cmd() -> list[str] | None:
+    """Return the command argv prefix to invoke `headsetcontrol`, or None if unavailable."""
+    local_bin = Path.home() / ".local" / "bin" / "headsetcontrol"
+    if local_bin.is_file() and os.access(local_bin, os.X_OK):
+        return [str(local_bin)]
+    which_bin = shutil.which("headsetcontrol")
+    if which_bin:
+        return [which_bin]
+    if in_flatpak_sandbox() and shutil.which("flatpak-spawn"):
+        try:
+            res = subprocess.run(
+                [
+                    "flatpak-spawn",
+                    "--host",
+                    "sh",
+                    "-c",
+                    'if [ -x "$HOME/.local/bin/headsetcontrol" ]; then echo "$HOME/.local/bin/headsetcontrol"; '
+                    'elif command -v headsetcontrol >/dev/null 2>&1; then command -v headsetcontrol; else exit 1; fi',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+            host_path = (res.stdout or "").strip()
+            if res.returncode == 0 and host_path:
+                return ["flatpak-spawn", "--host", host_path]
+        except Exception:
+            pass
+    return None
+
+
+def percent_to_headsetcontrol_sidetone(enabled: bool, percent: int) -> int:
+    """Convert a UI sidetone toggle + percentage (1-100) into HeadsetControl's 0-128 scale."""
+    if not enabled or int(percent) <= 0:
+        return 0
+    clamped = max(1, min(100, int(percent)))
+    return max(1, min(128, round(clamped * 128 / 100)))
+
+
+def apply_headset_sidetone(enabled: bool, percent: int) -> tuple[bool, str]:
+    """Apply hardware microphone sidetone level via `headsetcontrol --sidetone=<0..128>`."""
+    cmd = get_headsetcontrol_cmd()
+    if not cmd:
+        return False, "headsetcontrol not found in ~/.local/bin or PATH"
+    raw = percent_to_headsetcontrol_sidetone(enabled, percent)
+    try:
+        res = subprocess.run(
+            [*cmd, f"--sidetone={raw}"],
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+        )
+        out = (res.stdout or "").strip()
+        err = (res.stderr or "").strip()
+        if res.returncode == 0:
+            return True, out or f"Applied sidetone {percent if enabled else 0}% (raw {raw})"
+        return False, err or out or f"headsetcontrol exited with code {res.returncode}"
+    except subprocess.TimeoutExpired:
+        return False, "Timed out running headsetcontrol"
+    except Exception as exc:
+        return False, str(exc)
+
+
+def query_headset_status() -> dict:
+    """Query connected headset capabilities and battery status via `headsetcontrol -o json -b`."""
+    status = {
+        "available": False,
+        "device_name": "",
+        "connected": False,
+        "battery_percent": None,
+        "sidetone_capable": False,
+        "status_text": "headsetcontrol not installed",
+    }
+    cmd = get_headsetcontrol_cmd()
+    if not cmd:
+        return status
+    status["available"] = True
+    try:
+        res = subprocess.run(
+            [*cmd, "-o", "json", "-b"],
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+        )
+        raw_out = (res.stdout or "").strip()
+        if raw_out:
+            payload = json.loads(raw_out)
+            devices = payload.get("devices") or []
+            if devices:
+                dev = devices[0]
+                name = dev.get("product") or dev.get("device") or "USB Headset"
+                caps = dev.get("capabilities") or []
+                bat = dev.get("battery") or {}
+                bat_status = bat.get("status") or ""
+                level = bat.get("level")
+                status["device_name"] = name
+                status["sidetone_capable"] = "CAP_SIDETONE" in caps
+                if isinstance(level, (int, float)) and level >= 0 and bat_status != "BATTERY_UNAVAILABLE":
+                    pct = int(level)
+                    status["connected"] = True
+                    status["battery_percent"] = pct
+                    status["status_text"] = f"{name} — Online (Battery: {pct}%)"
+                elif dev.get("status") == "success" and bat_status != "BATTERY_UNAVAILABLE":
+                    status["connected"] = True
+                    status["status_text"] = f"{name} — Online"
+                else:
+                    status["status_text"] = f"{name} — Receiver connected (headset asleep / off)"
+                return status
+        err_msg = (res.stderr or res.stdout or "").strip()
+        status["status_text"] = err_msg or "No supported headset detected"
+    except subprocess.TimeoutExpired:
+        status["status_text"] = "Timed out querying headsetcontrol"
+    except Exception as exc:
+        status["status_text"] = f"Headset query error: {exc}"
+    return status
+
+
 def check_system_dependencies() -> dict:
     """Inspect system for EasyEffects and required audio/DSP packages.
 
@@ -846,6 +968,7 @@ def check_system_dependencies() -> dict:
         or shutil.which("pipewire") is not None
         or _has_host_or_local_binary("pipewire")
     )
+    headsetcontrol_installed = get_headsetcontrol_cmd() is not None
 
     # Check if native EasyEffects has required LV2/LADSPA DSP plugins (Flatpak EasyEffects bundles its own)
     lv2_dirs = [Path("/usr/lib/lv2"), Path("/usr/lib64/lv2"), Path("/usr/local/lib/lv2")]
@@ -872,26 +995,31 @@ def check_system_dependencies() -> dict:
         pactl_fix = "sudo pacman -S --needed libpulse pipewire-pulse"
         pw_fix = "sudo pacman -S --needed pipewire wireplumber"
         dsp_fix = "sudo pacman -S --needed lsp-plugins-lv2 calf zam-plugins-lv2 rnnoise speexdsp"
+        hsc_fix = "sudo pacman -S --needed headsetcontrol"
     elif pkg_mgr == "apt":
         ee_fix = "sudo apt update && sudo apt install -y easyeffects lsp-plugins-lv2 calf-plugins zam-plugins"
         pactl_fix = "sudo apt update && sudo apt install -y pulseaudio-utils pipewire-pulse"
         pw_fix = "sudo apt update && sudo apt install -y pipewire wireplumber"
         dsp_fix = "sudo apt update && sudo apt install -y lsp-plugins-lv2 calf-plugins zam-plugins librnnoise0"
+        hsc_fix = "sudo apt update && sudo apt install -y headsetcontrol"
     elif pkg_mgr == "dnf":
         ee_fix = "sudo dnf install -y easyeffects lsp-plugins-lv2 calf zam-plugins"
         pactl_fix = "sudo dnf install -y pulseaudio-utils pipewire-pulseaudio"
         pw_fix = "sudo dnf install -y pipewire wireplumber"
         dsp_fix = "sudo dnf install -y lsp-plugins-lv2 calf zam-plugins rnnoise"
+        hsc_fix = "sudo dnf copr enable -y thesapd/headsetcontrol && sudo dnf install -y headsetcontrol"
     elif pkg_mgr == "zypper":
         ee_fix = "sudo zypper install -y easyeffects lsp-plugins-lv2 calf"
         pactl_fix = "sudo zypper install -y pulseaudio-utils pipewire-pulseaudio"
         pw_fix = "sudo zypper install -y pipewire wireplumber"
         dsp_fix = "sudo zypper install -y lsp-plugins-lv2 calf rnnoise"
+        hsc_fix = "sudo zypper install -y headsetcontrol"
     else:
         ee_fix = "flatpak install -y flathub com.github.wwmm.easyeffects"
         pactl_fix = "Install 'pulseaudio-utils' or 'libpulse' using your system package manager"
         pw_fix = "Install 'pipewire' using your system package manager"
         dsp_fix = "flatpak install -y flathub com.github.wwmm.easyeffects"
+        hsc_fix = "Install 'headsetcontrol' from https://github.com/Sapd/HeadsetControl/releases"
 
     flatpak_ee_fix = "flatpak install -y flathub com.github.wwmm.easyeffects"
 
@@ -954,6 +1082,17 @@ def check_system_dependencies() -> dict:
             ),
             "fix_cmd": dsp_fix,
             "install_pkg_cmd": dsp_fix,
+            "install_flatpak_cmd": "",
+        },
+        {
+            "id": "headsetcontrol",
+            "name": "HeadsetControl (Hardware Sidetone)",
+            "required": False,
+            "installed": headsetcontrol_installed,
+            "status_text": "Installed" if headsetcontrol_installed else "Missing (Optional)",
+            "description": "Enables zero-latency hardware microphone sidetone and battery readout for supported USB headsets.",
+            "fix_cmd": hsc_fix,
+            "install_pkg_cmd": hsc_fix,
             "install_flatpak_cmd": "",
         },
     ]
@@ -1621,11 +1760,26 @@ def _clamp_float(val: object, default: float, min_val: float, max_val: float) ->
         return default
 
 
+def _clamp_int(val: object, default: int, min_val: int, max_val: int) -> int:
+    try:
+        if isinstance(val, bool):
+            return default
+        f = float(val)  # type: ignore[arg-type]
+        if f != f or f == float("inf") or f == float("-inf"):
+            return default
+        return max(min_val, min(max_val, int(round(f))))
+    except (ValueError, TypeError):
+        return default
+
+
 def sanitize_config(cfg: dict) -> dict:
     """Validate and clamp numeric configuration parameters."""
     cfg["debounce_seconds"] = _clamp_float(cfg.get("debounce_seconds", 2.0), 2.0, 0.0, 60.0)
     cfg["meeting_onset_seconds"] = _clamp_float(cfg.get("meeting_onset_seconds", 3.5), 3.5, 0.0, 60.0)
     cfg["check_interval_seconds"] = _clamp_float(cfg.get("check_interval_seconds", 1.0), 1.0, 0.25, 30.0)
+    cfg["sidetone_enabled"] = bool(cfg.get("sidetone_enabled", False))
+    cfg["sidetone_percent"] = _clamp_int(cfg.get("sidetone_percent", 40), 40, 1, 100)
+    cfg["sidetone_restore_on_connect"] = bool(cfg.get("sidetone_restore_on_connect", True))
     return cfg
 
 
@@ -2333,6 +2487,7 @@ class AudioMonitorWorker(QObject):
     state_changed = pyqtSignal(str, str, list)  # (mode, active_preset, active_streams_list)
     preset_switched = pyqtSignal(str, str)     # (new_preset, reason)
     media_paused = pyqtSignal(list)            # (list of paused media player names)
+    config_reloaded = pyqtSignal(dict)         # (reloaded config from external CLI edits)
 
     def __init__(self, config: dict):
         super().__init__()
@@ -2346,9 +2501,42 @@ class AudioMonitorWorker(QObject):
         self._media_paused_for_meeting = False
         self._was_strong_meeting_signal = False
         self._meeting_pause_guard_until = 0.0
+        self._config_mtime_ns = self._read_config_mtime_ns()
+        self._last_headset_check_at = 0.0
+        self._headset_was_connected: bool | None = None
+
+    @staticmethod
+    def _read_config_mtime_ns() -> int:
+        try:
+            return CONFIG_FILE.stat().st_mtime_ns
+        except OSError:
+            return 0
 
     def update_config(self, new_config: dict):
         self.config = sanitize_config(new_config)
+        self._config_mtime_ns = self._read_config_mtime_ns()
+
+    def _check_external_config_and_headset(self, now: float) -> None:
+        mtime_ns = self._read_config_mtime_ns()
+        if mtime_ns != 0 and mtime_ns != self._config_mtime_ns:
+            self._config_mtime_ns = mtime_ns
+            reloaded = load_config()
+            self.config = reloaded
+            self.config_reloaded.emit(dict(reloaded))
+
+        if self.config.get("sidetone_restore_on_connect", True) and self.config.get("sidetone_enabled", False):
+            if (now - self._last_headset_check_at) >= 30.0:
+                self._last_headset_check_at = now
+                hw = query_headset_status()
+                connected = bool(hw.get("connected", False))
+                if connected and self._headset_was_connected is False:
+                    pct = int(self.config.get("sidetone_percent", 40))
+                    ok, _ = apply_headset_sidetone(True, pct)
+                    if ok:
+                        print(f"Auto-restored hardware sidetone ({pct}%) on headset wake")
+                self._headset_was_connected = connected
+        else:
+            self._headset_was_connected = None
 
     def stop(self):
         self._running = False
@@ -2477,6 +2665,11 @@ class AudioMonitorWorker(QObject):
         self.last_preset = get_current_loaded_preset()
 
         while self._running:
+            try:
+                self._check_external_config_and_headset(time.time())
+            except Exception as e:
+                print(f"Sidetone/config sync error: {e}", file=sys.stderr)
+
             if not self.config.get("enabled", True):
                 time.sleep(1.0)
                 continue
@@ -2612,6 +2805,11 @@ class MainWindow(QMainWindow):
         self.resize(840, 740)
         self.setWindowIcon(QIcon(str(APP_ICON_FILE)) if APP_ICON_FILE.is_file() else build_tray_icon())
 
+        self._sidetone_slider_timer = QTimer(self)
+        self._sidetone_slider_timer.setSingleShot(True)
+        self._sidetone_slider_timer.setInterval(120)
+        self._sidetone_slider_timer.timeout.connect(self._apply_sidetone_from_ui)
+
         self._init_ui()
         self._populate_presets()
         self._load_config_to_ui()
@@ -2620,6 +2818,10 @@ class MainWindow(QMainWindow):
         # Connect worker signals
         self.worker.state_changed.connect(self._on_state_changed)
         self.worker.preset_switched.connect(self._on_preset_switched)
+        self.worker.config_reloaded.connect(self._on_external_config_reloaded)
+
+        # Defer initial USB HID headset query so window startup stays instantaneous
+        QTimer.singleShot(250, self._refresh_headset_status)
 
         # Periodic 6-hour background update check timer
         self._periodic_update_timer = QTimer(self)
@@ -2792,6 +2994,69 @@ class MainWindow(QMainWindow):
         grid.addLayout(preset_tools_row, 4, 0, 1, 3)
 
         layout_presets.addWidget(grp_mapping)
+
+        # Headset Hardware Sidetone group (instant-apply, zero-latency DSP monitor)
+        grp_sidetone = QGroupBox("Headset Hardware Sidetone (Zero-Latency Mic Monitor)", tab_presets)
+        sidetone_vbox = QVBoxLayout(grp_sidetone)
+        sidetone_vbox.setSpacing(8)
+
+        headset_status_row = QHBoxLayout()
+        self.lbl_headset_status = QLabel("<b>Headset:</b> Ready (Hardware Sidetone via headsetcontrol)", grp_sidetone)
+        self.lbl_headset_status.setWordWrap(True)
+        headset_status_row.addWidget(self.lbl_headset_status, 1)
+        self.btn_refresh_headset = QPushButton("🔄 Refresh Headset", grp_sidetone)
+        self.btn_refresh_headset.clicked.connect(self._refresh_headset_status)
+        headset_status_row.addWidget(self.btn_refresh_headset)
+        sidetone_vbox.addLayout(headset_status_row)
+
+        self.chk_sidetone_enabled = QCheckBox(
+            "Enable hardware sidetone (hear your own headset mic with 0 ms delay)", grp_sidetone
+        )
+        self.chk_sidetone_enabled.toggled.connect(self._on_sidetone_enabled_toggled)
+        sidetone_vbox.addWidget(self.chk_sidetone_enabled)
+
+        slider_row = QHBoxLayout()
+        slider_row.addWidget(QLabel("Sidetone Volume:", grp_sidetone))
+        self.slider_sidetone = QSlider(Qt.Orientation.Horizontal, grp_sidetone)
+        self.slider_sidetone.setRange(1, 100)
+        self.slider_sidetone.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.slider_sidetone.setTickInterval(20)
+        self.slider_sidetone.setToolTip("Adjust hardware microphone sidetone gain (1% – 100%)")
+        self.slider_sidetone.valueChanged.connect(self._on_sidetone_slider_changed)
+        self.slider_sidetone.sliderReleased.connect(self._on_sidetone_slider_released)
+        slider_row.addWidget(self.slider_sidetone, 1)
+
+        self.lbl_sidetone_pct = QLabel("40%", grp_sidetone)
+        self.lbl_sidetone_pct.setMinimumWidth(46)
+        self.lbl_sidetone_pct.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.lbl_sidetone_pct.setStyleSheet("font-weight: bold;")
+        slider_row.addWidget(self.lbl_sidetone_pct)
+
+        self._sidetone_quick_btns: list[QPushButton] = []
+        for pct in (25, 40, 60, 85):
+            btn = QPushButton(f"{pct}%", grp_sidetone)
+            btn.setToolTip(f"Enable sidetone at {pct}%")
+            btn.clicked.connect(lambda _checked=False, level=pct: self._set_sidetone_quick_level(level))
+            slider_row.addWidget(btn)
+            self._sidetone_quick_btns.append(btn)
+        sidetone_vbox.addLayout(slider_row)
+
+        self.chk_sidetone_restore = QCheckBox(
+            "Automatically re-apply sidetone when wireless headset powers on", grp_sidetone
+        )
+        self.chk_sidetone_restore.toggled.connect(self._on_sidetone_restore_toggled)
+        sidetone_vbox.addWidget(self.chk_sidetone_restore)
+
+        lbl_sidetone_note = QLabel(
+            "Adjusts headset DSP directly via <code>headsetcontrol</code> (0 ms latency, no software loopback). "
+            "Synced with <code>mic-sidetone</code> CLI.",
+            grp_sidetone,
+        )
+        lbl_sidetone_note.setWordWrap(True)
+        lbl_sidetone_note.setStyleSheet("font-size: 11px; color: gray;")
+        sidetone_vbox.addWidget(lbl_sidetone_note)
+
+        layout_presets.addWidget(grp_sidetone)
 
         # Detection toggles group
         grp_detect = QGroupBox("Detection Rules", tab_presets)
@@ -3237,6 +3502,13 @@ class MainWindow(QMainWindow):
             self.chk_updates_startup.setChecked(bool(self.config.get("check_updates_on_startup", True)))
             self.spin_debounce.setValue(round(float(self.config.get("debounce_seconds", 2.0)), 2))
             self.spin_meeting_onset.setValue(round(float(self.config.get("meeting_onset_seconds", 3.5)), 2))
+            sidetone_enabled = bool(self.config.get("sidetone_enabled", False))
+            sidetone_pct = _clamp_int(self.config.get("sidetone_percent", 40), 40, 1, 100)
+            sidetone_restore = bool(self.config.get("sidetone_restore_on_connect", True))
+            self.chk_sidetone_enabled.setChecked(sidetone_enabled)
+            self.slider_sidetone.setValue(sidetone_pct)
+            self.lbl_sidetone_pct.setText(f"{sidetone_pct}%")
+            self.chk_sidetone_restore.setChecked(sidetone_restore)
         finally:
             self._loading_ui = False
         self._on_ui_modified()
@@ -3246,6 +3518,9 @@ class MainWindow(QMainWindow):
         self.config["enabled"] = self.btn_toggle_enable.isChecked()
         self.config.update(ui_state)
         self.config["detect_media_apps"] = ui_state["detect_youtube"]
+        self.config["sidetone_enabled"] = self.chk_sidetone_enabled.isChecked()
+        self.config["sidetone_percent"] = int(self.slider_sidetone.value())
+        self.config["sidetone_restore_on_connect"] = self.chk_sidetone_restore.isChecked()
 
         self.btn_toggle_notify.blockSignals(True)
         self.btn_toggle_notify.setChecked(bool(ui_state["show_notifications"]))
@@ -3260,6 +3535,81 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self, "Settings Saved", "EasyEffects Auto Preset configuration saved successfully."
             )
+
+    def _refresh_headset_status(self):
+        hw = query_headset_status()
+        self.lbl_headset_status.setText(f"<b>Headset:</b> {hw['status_text']}")
+
+    @pyqtSlot(dict)
+    def _on_external_config_reloaded(self, new_cfg: dict):
+        self.config.update(new_cfg)
+        was_loading = self._loading_ui
+        self._loading_ui = True
+        try:
+            sidetone_enabled = bool(self.config.get("sidetone_enabled", False))
+            sidetone_pct = _clamp_int(self.config.get("sidetone_percent", 40), 40, 1, 100)
+            sidetone_restore = bool(self.config.get("sidetone_restore_on_connect", True))
+            self.chk_sidetone_enabled.setChecked(sidetone_enabled)
+            self.slider_sidetone.setValue(sidetone_pct)
+            self.lbl_sidetone_pct.setText(f"{sidetone_pct}%")
+            self.chk_sidetone_restore.setChecked(sidetone_restore)
+        finally:
+            self._loading_ui = was_loading
+
+    def _on_sidetone_enabled_toggled(self, checked: bool):
+        if self._loading_ui:
+            return
+        self._apply_sidetone_from_ui(force_hardware=True)
+
+    def _on_sidetone_slider_changed(self, value: int):
+        self.lbl_sidetone_pct.setText(f"{value}%")
+        if self._loading_ui:
+            return
+        self._sidetone_slider_timer.start()
+
+    def _on_sidetone_slider_released(self):
+        if self._loading_ui:
+            return
+        if self._sidetone_slider_timer.isActive():
+            self._sidetone_slider_timer.stop()
+            self._apply_sidetone_from_ui()
+
+    def _set_sidetone_quick_level(self, pct: int):
+        self._sidetone_slider_timer.stop()
+        was_loading = self._loading_ui
+        self._loading_ui = True
+        try:
+            self.slider_sidetone.setValue(pct)
+            self.lbl_sidetone_pct.setText(f"{pct}%")
+            self.chk_sidetone_enabled.setChecked(True)
+        finally:
+            self._loading_ui = was_loading
+        self._apply_sidetone_from_ui(force_hardware=True)
+
+    def _on_sidetone_restore_toggled(self, checked: bool):
+        if self._loading_ui:
+            return
+        self.config["sidetone_restore_on_connect"] = checked
+        save_config(self.config)
+        self.worker.update_config(self.config)
+        self.settings_saved.emit()
+
+    def _apply_sidetone_from_ui(self, force_hardware: bool = False):
+        enabled = self.chk_sidetone_enabled.isChecked()
+        pct = int(self.slider_sidetone.value())
+        restore = self.chk_sidetone_restore.isChecked()
+        self.config["sidetone_enabled"] = enabled
+        self.config["sidetone_percent"] = pct
+        self.config["sidetone_restore_on_connect"] = restore
+        save_config(self.config)
+        self.worker.update_config(self.config)
+        if enabled or force_hardware:
+            ok, msg = apply_headset_sidetone(enabled, pct)
+            if not ok:
+                self.lbl_headset_status.setText(f"<b>Headset:</b> {msg}")
+            else:
+                self._refresh_headset_status()
+        self.settings_saved.emit()
 
     def _on_enable_toggled(self, checked: bool):
         self._update_enable_btn_text(checked)
@@ -3565,12 +3915,14 @@ class TrayManager(QObject):
         self.worker.state_changed.connect(self._on_worker_state_changed)
         self.worker.preset_switched.connect(self._on_preset_switched)
         self.worker.media_paused.connect(self._on_media_paused)
+        self.worker.config_reloaded.connect(self._on_external_config_reloaded)
 
         # Start background monitor thread
         self.thread.start()
 
-        # Startup checks: dependencies, first-launch bundled presets offer, and update check
+        # Startup checks: dependencies, first-launch bundled presets offer, update check, and sidetone restore
         QTimer.singleShot(600, self._run_startup_checks)
+        QTimer.singleShot(1200, self._apply_startup_sidetone)
 
     def _run_startup_checks(self):
         # 1. Check if EasyEffects or pactl is missing
@@ -3630,6 +3982,34 @@ class TrayManager(QObject):
         self.notifications_action.setChecked(self.config.get("show_notifications", True))
         self.notifications_action.triggered.connect(self._on_toggle_notifications)
         self.menu.addAction(self.notifications_action)
+
+        self.menu.addSeparator()
+        self.sidetone_action = QAction("🎧 Headset Sidetone (Mic Monitor)", self.menu)
+        self.sidetone_action.setCheckable(True)
+        self.sidetone_action.setChecked(bool(self.config.get("sidetone_enabled", False)))
+        self.sidetone_action.triggered.connect(self._on_tray_sidetone_toggled)
+        self.menu.addAction(self.sidetone_action)
+
+        self.menu_sidetone = self.menu.addMenu("🎧 Sidetone Level...")
+        self._sidetone_level_group = QActionGroup(self.menu_sidetone)
+        self._sidetone_level_group.setExclusive(True)
+        self._sidetone_level_actions: dict[int, QAction] = {}
+        for label, level in (
+            ("Off", 0),
+            ("25% (Subtle)", 25),
+            ("40% (Natural)", 40),
+            ("60% (Clear)", 60),
+            ("80% (Loud)", 80),
+            ("100% (Max)", 100),
+        ):
+            act = QAction(label, self.menu_sidetone)
+            act.setCheckable(True)
+            self._sidetone_level_group.addAction(act)
+            act.triggered.connect(lambda _checked=False, lvl=level: self._on_tray_sidetone_level(lvl))
+            self.menu_sidetone.addAction(act)
+            self._sidetone_level_actions[level] = act
+        self.menu.aboutToShow.connect(self._sync_tray_toggles_from_config)
+        self._sync_tray_toggles_from_config()
 
         # Quick preset override submenu
         self.menu_presets = self.menu.addMenu("Force Preset...")
@@ -3749,6 +4129,62 @@ class TrayManager(QObject):
         self.toggle_action.setChecked(bool(self.config.get("enabled", True)))
         self.pause_media_action.setChecked(bool(self.config.get("pause_media_in_meetings", True)))
         self.notifications_action.setChecked(bool(self.config.get("show_notifications", True)))
+        sidetone_enabled = bool(self.config.get("sidetone_enabled", False))
+        sidetone_pct = _clamp_int(self.config.get("sidetone_percent", 40), 40, 1, 100)
+        self.sidetone_action.setChecked(sidetone_enabled)
+        target_level = 0 if not sidetone_enabled else sidetone_pct
+        self._sidetone_level_group.setExclusive(False)
+        for lvl, act in self._sidetone_level_actions.items():
+            act.setChecked(lvl == target_level)
+        self._sidetone_level_group.setExclusive(True)
+
+    def _apply_startup_sidetone(self):
+        if self.config.get("sidetone_restore_on_connect", True) and self.config.get("sidetone_enabled", False):
+            pct = _clamp_int(self.config.get("sidetone_percent", 40), 40, 1, 100)
+            apply_headset_sidetone(True, pct)
+
+    @pyqtSlot(dict)
+    def _on_external_config_reloaded(self, new_cfg: dict):
+        self.config.update(new_cfg)
+        self._sync_tray_toggles_from_config()
+
+    def _on_tray_sidetone_toggled(self, checked: bool):
+        pct = _clamp_int(self.config.get("sidetone_percent", 40), 40, 1, 100)
+        self.config["sidetone_enabled"] = checked
+        self.config["sidetone_percent"] = pct
+        save_config(self.config)
+        self.worker.update_config(self.config)
+        self.window._on_external_config_reloaded(self.config)
+        ok, msg = apply_headset_sidetone(checked, pct)
+        self._sync_tray_toggles_from_config()
+        if self.config.get("show_notifications", True):
+            if ok:
+                body = f"Hardware sidetone ON ({pct}%)" if checked else "Hardware sidetone OFF"
+            else:
+                body = f"Saved ({pct if checked else 0}%), headset note: {msg}"
+            self.tray_icon.showMessage("Headset Sidetone", body, QSystemTrayIcon.MessageIcon.Information, 1800)
+
+    def _on_tray_sidetone_level(self, level: int):
+        if level <= 0:
+            self.config["sidetone_enabled"] = False
+            enabled = False
+            pct = _clamp_int(self.config.get("sidetone_percent", 40), 40, 1, 100)
+        else:
+            enabled = True
+            pct = _clamp_int(level, 40, 1, 100)
+            self.config["sidetone_enabled"] = True
+            self.config["sidetone_percent"] = pct
+        save_config(self.config)
+        self.worker.update_config(self.config)
+        self.window._on_external_config_reloaded(self.config)
+        ok, msg = apply_headset_sidetone(enabled, pct)
+        self._sync_tray_toggles_from_config()
+        if self.config.get("show_notifications", True):
+            if ok:
+                body = f"Hardware sidetone set to {pct}%" if enabled else "Hardware sidetone OFF"
+            else:
+                body = f"Saved ({pct if enabled else 0}%), headset note: {msg}"
+            self.tray_icon.showMessage("Headset Sidetone", body, QSystemTrayIcon.MessageIcon.Information, 1800)
 
     @pyqtSlot(list)
     def _on_media_paused(self, paused_players: list):
@@ -3815,29 +4251,79 @@ def _is_our_app_process(pid: int) -> bool:
             return False
 
         # Ignore one-shot CLI invocations
-        one_shot_flags = {
-            "--cli-status",
-            "--status",
-            "-s",
-            "--switch",
-            "--install-presets",
-            "--check-deps",
-            "--check-update",
-            "-u",
-            "--self-update",
-            "--list-presets",
-            "-l",
-            "--version",
-            "-V",
-            "--help",
-            "-h",
-        }
-        if any(a in one_shot_flags for a in args[1:]):
+        if is_one_shot_cli_args(args[1:]):
             return False
 
         return True
     except Exception:
         return False
+
+
+def is_one_shot_cli_args(cli_args: list[str]) -> bool:
+    """Return True if argv arguments represent a one-shot CLI invocation rather than a daemon/tray instance."""
+    one_shot_flags = {
+        "--cli-status",
+        "--status",
+        "-s",
+        "--switch",
+        "--sidetone",
+        "--install-presets",
+        "--check-deps",
+        "--check-update",
+        "-u",
+        "--self-update",
+        "--list-presets",
+        "-l",
+        "--version",
+        "-V",
+        "--help",
+        "-h",
+    }
+    return any(
+        a in one_shot_flags or a.startswith("--sidetone=") or a.startswith("--switch=")
+        for a in cli_args
+    )
+
+
+def handle_cli_sidetone(value: str) -> int:
+    """Handle one-shot `--sidetone <on|off|toggle|0-100>` CLI command."""
+    cfg = load_config()
+    enabled = bool(cfg.get("sidetone_enabled", False))
+    percent = _clamp_int(cfg.get("sidetone_percent", 40), 40, 1, 100)
+    arg = value.strip().lower().rstrip("%")
+
+    if arg == "on":
+        enabled = True
+    elif arg == "off":
+        enabled = False
+    elif arg == "toggle":
+        enabled = not enabled
+    else:
+        try:
+            lvl = int(arg)
+        except ValueError:
+            print("Error: --sidetone expects 'on', 'off', 'toggle', or 0-100.", file=sys.stderr)
+            return 2
+        if lvl < 0 or lvl > 100:
+            print("Error: --sidetone percentage must be between 0 and 100.", file=sys.stderr)
+            return 2
+        if lvl == 0:
+            enabled = False
+        else:
+            enabled = True
+            percent = lvl
+
+    cfg["sidetone_enabled"] = enabled
+    cfg["sidetone_percent"] = percent
+    save_config(cfg)
+
+    ok, msg = apply_headset_sidetone(enabled, percent)
+    if ok:
+        raw = percent_to_headsetcontrol_sidetone(enabled, percent)
+        print(f"Hardware sidetone {'ON' if enabled else 'OFF'} ({percent}% / raw {raw})")
+        return 0
+    print(f"Saved sidetone config (enabled={enabled}, percent={percent}%), but hardware apply failed: {msg}", file=sys.stderr)
+    return 1
 
 
 def _cleanup_pid_file() -> None:
@@ -3956,6 +4442,12 @@ def main():
     parser.add_argument("-l", "--list-presets", action="store_true", help="List available EasyEffects presets and exit")
     parser.add_argument("--switch", type=str, help="Immediately apply an output preset and exit")
     parser.add_argument(
+        "--sidetone",
+        type=str,
+        metavar="on|off|toggle|0-100",
+        help="Set or toggle hardware headset sidetone and exit",
+    )
+    parser.add_argument(
         "--install-presets",
         action="store_true",
         help="Install all bundled Meeting-Voice and Media presets into EasyEffects and exit",
@@ -4027,6 +4519,9 @@ def main():
         ok = apply_preset(args.switch)
         print(f"Applied preset '{args.switch}': {'OK' if ok else 'FAILED'}")
         sys.exit(0 if ok else 1)
+
+    if args.sidetone is not None:
+        sys.exit(handle_cli_sidetone(args.sidetone))
 
     if args.cli_status:
         cur = get_current_loaded_preset()

@@ -49,6 +49,7 @@ else
       install -Dm755 \"\$CARGO_TARGET_DIR/release/easyeffects-auto-preset\" /app/bin/easyeffects-auto-preset-daemon
       install -Dm755 '$REPO_ROOT/python/easyeffects_auto_preset.py' /app/bin/easyeffects-auto-preset-gui
       install -Dm755 '$REPO_ROOT/python/easyeffects_auto_preset.py' /app/bin/easyeffects-auto-preset
+      install -Dm755 '$REPO_ROOT/python/mic-sidetone' /app/bin/mic-sidetone
       install -Dm644 '$REPO_ROOT/data/${APP_ID}.desktop' -t /app/share/applications/
       install -Dm644 '$REPO_ROOT/data/${APP_ID}.metainfo.xml' -t /app/share/metainfo/
       install -Dm644 '$REPO_ROOT/data/icons/${APP_ID}.png' -t /app/share/icons/hicolor/128x128/apps/
