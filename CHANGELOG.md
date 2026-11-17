@@ -2,6 +2,16 @@
 
 All notable changes and bumped dependencies for `russellmilliner/easyeffects-auto-preset` are documented in this file.
 
+## [v0.5.5-deps](https://github.com/russellmilliner/easyeffects-auto-preset/releases/tag/v0.5.5-deps) — 2026-11-17
+
+### 📦 Bumped Dependencies (3 packages)
+
+| Package | Previous | Updated | Scope |
+| :--- | :--- | :--- | :--- |
+| `clap` | `4.6.7` | **`4.6.8`** | Direct (`Cargo.toml`) |
+| `clap_derive` | `4.6.7` | **`4.6.8`** | Lockfile (`Cargo.lock`) |
+| `clap_lex` | `1.1.1` | **`1.1.2`** | Lockfile (`Cargo.lock`) |
+
 ## [v0.5.5](https://github.com/russellmilliner/easyeffects-auto-preset/releases/tag/v0.5.5) — 2026-11-15
 
 ### Added
